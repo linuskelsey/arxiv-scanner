@@ -36,8 +36,17 @@ else
 fi
 
 mkdir -p "$SYSTEMD_DIR"
+# The .service is static (just invokes poll.py, never user-edited) so it's
+# always safe to refresh. The .timer is NOT: save-settings.sh rewrites its
+# OnCalendar line whenever the Settings panel's scan-time field changes, so
+# blindly overwriting it on every install.sh re-run would silently discard
+# that. Only install it if it's not already there.
 cp "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.service" "$SYSTEMD_DIR/"
-cp "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.timer" "$SYSTEMD_DIR/"
+if [[ ! -f "$SYSTEMD_DIR/omarchy-arxiv-scanner.timer" ]]; then
+  cp "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.timer" "$SYSTEMD_DIR/"
+else
+  echo "Existing timer found at $SYSTEMD_DIR/omarchy-arxiv-scanner.timer — leaving it alone (it may hold a scan time you set via the widget's Settings panel)."
+fi
 
 systemctl --user daemon-reload
 systemctl --user enable --now omarchy-arxiv-scanner.timer

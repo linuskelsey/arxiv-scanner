@@ -41,15 +41,36 @@ git clone <this-repo-url> ~/.config/omarchy/plugins/prometheus.arxiv-scanner
 ~/.config/omarchy/plugins/prometheus.arxiv-scanner/install.sh
 ```
 
-`install.sh` is safe to re-run. It:
+`install.sh` is safe to re-run. It never overwrites your existing config or a
+timer whose scan time you've already customized. It:
 
 - Writes a default `~/.config/omarchy-arxiv-scanner/config.json` if one
-  doesn't already exist (never overwrites an existing one)
+  doesn't already exist
 - Installs and enables the `omarchy-arxiv-scanner.timer` systemd user unit
+  (skipped if that unit file already exists, since the Settings panel edits
+  it in place to store your chosen scan time)
 - Warns (but doesn't fail) if `python3`, `jq`, or `claude` are missing
 
 If the bar icon doesn't appear afterward, restart the shell:
 `omarchy-restart-shell`.
+
+## Uninstall
+
+```bash
+~/.config/omarchy/plugins/prometheus.arxiv-scanner/uninstall.sh
+```
+
+This stops and removes the systemd timer/service. It deliberately leaves
+your config, scan history, and the plugin directory itself in place — delete
+these manually for a full clean removal:
+
+```bash
+rm -rf ~/.config/omarchy/plugins/prometheus.arxiv-scanner
+rm -rf ~/.config/omarchy-arxiv-scanner
+rm -rf ~/.local/state/omarchy-arxiv-scanner
+```
+
+Then restart the shell (`omarchy-restart-shell`) so the bar icon disappears.
 
 ## Configuration
 
