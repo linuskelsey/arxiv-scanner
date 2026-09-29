@@ -48,7 +48,7 @@ git clone https://github.com/linuskelsey/arxiv-scanner.git ~/.config/omarchy/plu
 cd ~/.config/omarchy/plugins/prometheus.arxiv-scanner
 # Pin to the exact reviewed commit rather than a branch (which can move) or
 # a tag (which, unlike a commit hash, can be force-moved to point elsewhere).
-git checkout 0a93520fe1f6c4489dbceb8c6202212ff76aa6e5
+git checkout bbd45b0202fa50bf60fb155bc50347b847730ec7
 ./install.sh
 ```
 
