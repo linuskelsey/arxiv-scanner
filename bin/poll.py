@@ -109,10 +109,38 @@ def run_claude(prompt: str, timeout: float, max_bytes: int = MAX_CLAUDE_OUTPUT_C
     `except subprocess.SubprocessError` call sites catch it without change)
     if either stream exceeds max_bytes, and subprocess.TimeoutExpired if
     the whole exchange doesn't finish within timeout seconds.
+
+    The prompt embeds untrusted third-party text (paper titles/abstracts
+    from arXiv) and this runs unattended off a systemd timer — an
+    adversarial abstract could try to talk Claude into invoking a tool or
+    an MCP server, subject to whatever the user has locally configured
+    (permissive Bash rules, a connected MCP service, etc). --tools ""
+    removes every built-in tool regardless of that config, so there's
+    nothing to invoke even if the injection attempt would otherwise have
+    "worked"; --disallowedTools is needed separately since --tools doesn't
+    reach MCP tools. Verified empirically (--output-format stream-json,
+    inspecting the system/init event) rather than assumed from the docs
+    alone: with both flags, `tools` comes back [] even though a few
+    claude.ai-connector MCP servers still show as "connected" in that same
+    event — connection status there doesn't imply any of their tools are
+    actually exposed, and none are.
+
+    --setting-sources "" additionally drops most locally-installed skills
+    from that same session (confirmed by diffing system/init's `skills`
+    list with and without it) — but not `memory_paths` (CLAUDE.md/auto
+    memory), which stays populated either way. --bare is the one flag
+    that's documented to skip CLAUDE.md/memory too, and would be the more
+    complete fix, but it also stops reading the OAuth/subscription session
+    this plugin otherwise relies on (needs ANTHROPIC_API_KEY instead),
+    which would break it for most users — not used here for that reason.
+    The residual exposure this leaves is CLAUDE.md content shaping output
+    *style*, not any tool/MCP invocation capability, which is fully closed
+    above regardless.
     """
     deadline = time.monotonic() + timeout  # starts now, before any I/O
     proc = subprocess.Popen(
-        ["claude", "-p", "--output-format", "text"],
+        ["claude", "-p", "--output-format", "text",
+         "--tools", "", "--disallowedTools", "mcp__*", "--setting-sources", ""],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         start_new_session=True,
     )
