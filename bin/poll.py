@@ -24,12 +24,30 @@ import tempfile
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 STATE_DIR = Path.home() / ".local/state/omarchy-arxiv-scanner"
 STATE_FILE = STATE_DIR / "state.json"
+# The durable superset of every paper ever found for a watched author —
+# distinct from state.json's watched_matches, which is a derived, capped
+# VIEW recomputed from this on every scan. Keeping the two separate means
+# removing a watched author, or raising a cap, takes effect immediately
+# against everything already known, without needing a fresh API backfill.
+WATCHED_CANDIDATES_FILE = STATE_DIR / "watched_candidates.json"
+MAX_WATCHED_CANDIDATES = 500
+# Matches check-authors.py's own backfill lookback (it imports this rather
+# than defining a separate constant) — the superset shouldn't hold a paper
+# check-authors.py itself would no longer consider "recent" for the same
+# author. Not currently user-configurable; queued as a follow-up (would
+# need to become a config field both here and in check-authors.py's own
+# --max-per-author-style CLI handling).
+MAX_WATCHED_CANDIDATE_AGE_DAYS = 30
+# Persistent record of which (name, category) pairs check-authors.py has
+# already confirmed exist on arXiv, so re-running it after adding one more
+# watched author doesn't re-query everyone already verified.
+AUTHOR_CACHE_FILE = STATE_DIR / "author_verify_cache.json"
 CONFIG_DIR = Path.home() / ".config/omarchy-arxiv-scanner"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 NOTIFIED_ID_CAP = 1000
@@ -225,24 +243,97 @@ def load_state() -> dict:
     return {}
 
 
-def write_state(state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    # Not a predictable "state.json.tmp": that name could be pre-planted as
-    # a symlink, and .write_text() follows it, truncating whatever it
-    # points at instead of a real temp file. mkstemp opens with O_CREAT |
-    # O_EXCL, which fails rather than following an existing path (symlink
-    # or otherwise), so this can only ever create a brand new file.
-    fd, tmp_path = tempfile.mkstemp(dir=STATE_DIR, prefix=".state.json.")
+def _atomic_write_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Not a predictable "<name>.tmp": that name could be pre-planted as a
+    # symlink, and .write_text() follows it, truncating whatever it points
+    # at instead of a real temp file. mkstemp opens with O_CREAT | O_EXCL,
+    # which fails rather than following an existing path (symlink or
+    # otherwise), so this can only ever create a brand new file.
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(state, indent=2))
-        os.replace(tmp_path, STATE_FILE)
+            f.write(json.dumps(data, indent=2))
+        os.replace(tmp_path, path)
     except BaseException:
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
         raise
+
+
+def write_state(state: dict) -> None:
+    _atomic_write_json(STATE_FILE, state)
+
+
+def load_watched_candidates() -> list[dict]:
+    if WATCHED_CANDIDATES_FILE.exists():
+        try:
+            data = json.loads(WATCHED_CANDIDATES_FILE.read_text())
+            if isinstance(data, list):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
+def write_watched_candidates(candidates: list[dict]) -> None:
+    _atomic_write_json(WATCHED_CANDIDATES_FILE, candidates)
+
+
+def prune_watched_candidates(candidates: list[dict]) -> list[dict]:
+    """
+    Bounds the persistent watched-author superset so a long-running
+    install with many watched authors can't grow it unboundedly — capped
+    by both age and count, oldest dropped first. Anything with an
+    unparseable or missing published date is dropped too, rather than kept
+    forever by default.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_WATCHED_CANDIDATE_AGE_DAYS)
+    kept = []
+    for c in candidates:
+        try:
+            pub = datetime.fromisoformat(c["published"].replace("Z", "+00:00"))
+        except (ValueError, KeyError, AttributeError, TypeError):
+            continue
+        if pub >= cutoff:
+            kept.append(c)
+    kept.sort(key=lambda m: m["published"], reverse=True)
+    return kept[:MAX_WATCHED_CANDIDATES]
+
+
+def filter_watched_for_config(candidates: list[dict], watched_authors: list[str]) -> list[dict]:
+    """
+    The persistent superset can carry papers matched against an author
+    who's since been removed from watchedAuthors. Filtered here, on every
+    read, against matched_config_name — the exact watchedAuthors string
+    that caused the match, not matched_author (the paper's own author-list
+    spelling, which can differ) — so removing a watched author drops their
+    papers from the displayed list on the very next scan, with nobody
+    needing to notice and manually re-check.
+    """
+    watched_l = {w.strip().lower() for w in watched_authors}
+    return [c for c in candidates if c.get("matched_config_name", "").strip().lower() in watched_l]
+
+
+def author_cache_key(name: str, category: str) -> str:
+    return f"{category.strip().lower()}::{name.strip().lower()}"
+
+
+def load_author_cache() -> dict:
+    if AUTHOR_CACHE_FILE.exists():
+        try:
+            data = json.loads(AUTHOR_CACHE_FILE.read_text())
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def write_author_cache(cache: dict) -> None:
+    _atomic_write_json(AUTHOR_CACHE_FILE, cache)
 
 
 def load_config() -> dict:
@@ -450,6 +541,13 @@ def watched_author_matches(candidates: list[dict], watched: list[str]) -> list[d
                         # watched name can match a co-author further down
                         # the list, not whoever's listed first.
                         "matched_author": author,
+                        # The exact watchedAuthors config string that caused
+                        # this match (vs matched_author above, the paper's
+                        # own spelling) — used to re-filter the persistent
+                        # candidate superset against the *current* config on
+                        # every scan, so removing a watched author actually
+                        # drops their papers instead of them lingering.
+                        "matched_config_name": name,
                         "watched": True,
                         # Consumed by main()'s summarize_papers() call and
                         # dropped before this dict is ever written to state —
@@ -627,16 +725,22 @@ def main() -> None:
         for m in todays_watched:
             m["summary"] = summaries.get(m["id"], "")
 
-    # This scan only ever sees *today's* feed, but the watched-authors column
-    # is meant to read as "their N most recent papers" regardless of when
-    # each scan ran — so merge into whatever's already there (including
-    # check-authors.py's on-demand backfill) instead of replacing it outright,
-    # or a paper found today would just get evicted by tomorrow's empty scan.
-    # merge_watched_matches also collapses the same paper found via both
-    # this scan and check-authors.py's backfill — they use different id
-    # formats for an identical paper — and lets a newer revision replace an
-    # older one instead of both showing up.
-    watched_matches = merge_watched_matches(prev.get("watched_matches", []), todays_watched)
+    # Today's hits merge into the durable superset (never directly into the
+    # displayed list) — merge_watched_matches collapses the same paper found
+    # via both this scan and check-authors.py's backfill (different id
+    # formats for an identical paper) and lets a newer revision replace an
+    # older one instead of both showing up; prune_watched_candidates bounds
+    # the superset by age/count so it can't grow unboundedly over time.
+    watched_candidates = merge_watched_matches(load_watched_candidates(), todays_watched)
+    watched_candidates = prune_watched_candidates(watched_candidates)
+    write_watched_candidates(watched_candidates)
+
+    # The displayed watched_matches is a fresh VIEW recomputed from that
+    # superset on *every* scan — filtered against whichever authors are
+    # currently configured (so removing one drops their papers immediately,
+    # not just on the next manual re-check) and re-capped fresh (so a
+    # raised cap or a freed-up per-author slot fills back in on its own).
+    watched_matches = filter_watched_for_config(watched_candidates, config["watchedAuthors"])
     watched_matches = cap_per_author(watched_matches, config.get("maxWatchedPerAuthor"))
     watched_matches = sorted(watched_matches, key=lambda m: m["published"], reverse=True)
     watched_matches = watched_matches[:config["maxWatchedMatches"]]

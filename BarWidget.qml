@@ -654,7 +654,9 @@ BarWidget {
                   text: (modelData.found ? "✓ " : "✗ ") + modelData.name
                     + (modelData.found
                       ? " — " + modelData.total_count + " paper(s) in " + root.category
-                        + (modelData.recent && modelData.recent.length > 0 ? ", " + modelData.recent.length + " in the last 30 days" : ", none in the last 30 days")
+                        + (modelData.cached
+                          ? " (already verified — skipped re-checking)"
+                          : (modelData.recent && modelData.recent.length > 0 ? ", " + modelData.recent.length + " in the last 30 days" : ", none in the last 30 days"))
                       : " — no papers found in " + root.category + ". Check spelling (arXiv wants \"Firstname Lastname\") or that they publish in this category.")
                   color: modelData.found ? Qt.darker(root.bar.foreground, 1.2) : Color.urgent
                   font.family: root.bar.fontFamily
