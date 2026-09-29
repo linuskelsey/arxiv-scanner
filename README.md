@@ -46,9 +46,12 @@ list.
 ```bash
 git clone https://github.com/linuskelsey/arxiv-scanner.git ~/.config/omarchy/plugins/prometheus.arxiv-scanner
 cd ~/.config/omarchy/plugins/prometheus.arxiv-scanner
-# Pin to the exact reviewed commit rather than a branch (which can move) or
-# a tag (which, unlike a commit hash, can be force-moved to point elsewhere).
-git checkout 0a93520fe1f6c4489dbceb8c6202212ff76aa6e5
+# Pin to the last already-approved marketplace snapshot rather than a
+# branch (which can move) or a tag (which, unlike a commit hash, can be
+# force-moved to point elsewhere). This can never be the commit you're
+# reading this file at — a commit can't embed its own resulting hash — so
+# it intentionally trails whatever's currently under review by one step.
+git checkout ed1f5ece932078ce97090548d1524132e14c5bf3
 ./install.sh
 ```
 
