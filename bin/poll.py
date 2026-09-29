@@ -86,59 +86,95 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
 
 def run_claude(prompt: str, timeout: float, max_bytes: int = MAX_CLAUDE_OUTPUT_CHARS) -> subprocess.CompletedProcess:
     """
-    subprocess.run(["claude", ...], capture_output=True) but the max_bytes
-    cap is enforced while reading the child's stdout/stderr pipes, not by
-    truncating a string after the full output has already been buffered in
-    memory — a misbehaving or compromised claude process gets killed the
-    moment it crosses the cap rather than being allowed to keep writing.
+    subprocess.run(["claude", ...], capture_output=True) but:
+
+    - the max_bytes cap is enforced while reading the child's stdout/stderr
+      pipes, not by truncating a string after the full output has already
+      been buffered in memory — a misbehaving or compromised claude process
+      gets killed the moment it crosses the cap rather than being allowed
+      to keep writing.
+    - stdin is written and stdout/stderr are drained concurrently in one
+      non-blocking select loop, with the timeout deadline starting before
+      any I/O at all. Writing the whole prompt to stdin first and only
+      then starting to read stdout/stderr (subprocess.run's own approach,
+      minus its internal threading) deadlocks once the prompt is bigger
+      than the OS pipe buffer (~64KB — an easy bar for a batch of paper
+      abstracts) and the child hasn't fully drained stdin before it starts
+      writing its own output: the parent blocks on a full stdin pipe, the
+      child blocks on a full stdout pipe, forever — and since the deadline
+      was never started, the timeout never fires either.
+
     Raises ClaudeOutputTooLarge (a subprocess.SubprocessError, so existing
     `except subprocess.SubprocessError` call sites catch it without change)
-    if either stream exceeds max_bytes, and subprocess.TimeoutExpired on
-    the same wall-clock deadline subprocess.run would have used.
+    if either stream exceeds max_bytes, and subprocess.TimeoutExpired if
+    the whole exchange doesn't finish within timeout seconds.
     """
+    deadline = time.monotonic() + timeout  # starts now, before any I/O
     proc = subprocess.Popen(
         ["claude", "-p", "--output-format", "text"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, start_new_session=True,
+        start_new_session=True,
     )
     try:
-        try:
-            proc.stdin.write(prompt)
-        except BrokenPipeError:
-            pass
-        finally:
-            proc.stdin.close()
+        stdin_fd, stdout_fd, stderr_fd = proc.stdin.fileno(), proc.stdout.fileno(), proc.stderr.fileno()
+        for fd in (stdin_fd, stdout_fd, stderr_fd):
+            os.set_blocking(fd, False)
+
+        stdin_data = prompt.encode()
+        stdin_pos = 0
+        stdin_open = len(stdin_data) > 0
 
         sel = selectors.DefaultSelector()
-        sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
-        sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
-        chunks = {"stdout": [], "stderr": []}
-        sizes = {"stdout": 0, "stderr": 0}
-        open_streams = {proc.stdout, proc.stderr}
-        deadline = time.monotonic() + timeout
+        sel.register(stdout_fd, selectors.EVENT_READ, "stdout")
+        sel.register(stderr_fd, selectors.EVENT_READ, "stderr")
+        if stdin_open:
+            sel.register(stdin_fd, selectors.EVENT_WRITE, "stdin")
+        else:
+            proc.stdin.close()
 
-        while open_streams:
+        chunks = {"stdout": bytearray(), "stderr": bytearray()}
+        open_read = {"stdout", "stderr"}
+
+        while open_read or stdin_open:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 _kill_process_group(proc)
                 raise subprocess.TimeoutExpired(proc.args, timeout)
             for key, _ in sel.select(timeout=min(remaining, 1.0)):
-                stream = key.fileobj
                 name = key.data
-                chunk = stream.read(65536)
-                if chunk == "":
-                    sel.unregister(stream)
-                    open_streams.discard(stream)
+                if name == "stdin":
+                    try:
+                        n = os.write(stdin_fd, stdin_data[stdin_pos:stdin_pos + 65536])
+                        stdin_pos += n
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        n = None
+                    if n is None or stdin_pos >= len(stdin_data):
+                        sel.unregister(stdin_fd)
+                        proc.stdin.close()
+                        stdin_open = False
                     continue
-                sizes[name] += len(chunk)
-                if sizes[name] > max_bytes:
+
+                fd = stdout_fd if name == "stdout" else stderr_fd
+                try:
+                    chunk = os.read(fd, 65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    sel.unregister(fd)
+                    open_read.discard(name)
+                    continue
+                chunks[name].extend(chunk)
+                if len(chunks[name]) > max_bytes:
                     _kill_process_group(proc)
                     raise ClaudeOutputTooLarge(f"claude {name} exceeded {max_bytes} bytes")
-                chunks[name].append(chunk)
 
         returncode = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
         return subprocess.CompletedProcess(
-            proc.args, returncode, "".join(chunks["stdout"]), "".join(chunks["stderr"])
+            proc.args, returncode,
+            chunks["stdout"].decode(errors="replace"),
+            chunks["stderr"].decode(errors="replace"),
         )
     finally:
         if proc.poll() is None:

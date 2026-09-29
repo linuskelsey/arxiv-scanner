@@ -13,6 +13,13 @@ CONFIG_DIR="$HOME/.config/omarchy-arxiv-scanner"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 TIMER_FILE="$HOME/.config/systemd/user/omarchy-arxiv-scanner.timer"
 
+# Same-named unit at that path might not be ours — install.sh already
+# checks this before touching it; this script edits the timer in place too
+# (below) and needs the same guard, or a foreign unit could be altered by
+# the Settings panel.
+MARKER="# Managed-By: prometheus.arxiv-scanner"
+is_ours() { [[ -f "$1" ]] && grep -qF "$MARKER" "$1"; }
+
 CATEGORY="quant-ph"
 INTERESTS=""
 AUTHORS=""
@@ -65,7 +72,7 @@ mv -f "$TMP_FILE" "$CONFIG_FILE"
 # Only touch the timer if poll time is a valid HH:MM and actually differs —
 # a systemctl restart on every settings save (even unrelated ones) would
 # reset the timer's elapse countdown for no reason.
-if [[ "$POLL_TIME" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] && [[ -f "$TIMER_FILE" ]]; then
+if [[ "$POLL_TIME" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] && is_ours "$TIMER_FILE"; then
   CURRENT="$(grep -oP '(?<=OnCalendar=\*-\*-\* )\d{2}:\d{2}(?=:00)' "$TIMER_FILE" || true)"
   if [[ "$CURRENT" != "$POLL_TIME" ]]; then
     sed -i "s/^OnCalendar=.*/OnCalendar=*-*-* ${POLL_TIME}:00/" "$TIMER_FILE"
