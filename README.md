@@ -46,7 +46,9 @@ list.
 ```bash
 git clone https://github.com/linuskelsey/arxiv-scanner.git ~/.config/omarchy/plugins/prometheus.arxiv-scanner
 cd ~/.config/omarchy/plugins/prometheus.arxiv-scanner
-git checkout v1.0.1  # pin to a specific tagged release rather than a moving branch
+# Pin to the exact reviewed commit rather than a branch (which can move) or
+# a tag (which, unlike a commit hash, can be force-moved to point elsewhere).
+git checkout ece1d9262fb8094f76c4a4e58fe0f3dae0f3220e
 ./install.sh
 ```
 
