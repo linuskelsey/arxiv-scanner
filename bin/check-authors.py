@@ -45,7 +45,10 @@ REQUEST_GAP_SECONDS = 3
 # dig — cap how far back the "recent papers" list can reach. Validation
 # (found / total_count) stays unbounded so a prolific-but-currently-quiet
 # author still confirms as a real, correctly-spelled name.
-MAX_BACKFILL_DAYS = 30
+# Shared with poll.py's persistent watched-candidates superset (imported
+# rather than a separate constant here) — that superset shouldn't outlive
+# what this backfill itself would consider "recent" for the same author.
+MAX_BACKFILL_DAYS = poll.MAX_WATCHED_CANDIDATE_AGE_DAYS
 # arXiv's per-author API response is small (a handful of entries). Cap well
 # above that so a misbehaving/compromised endpoint can't force an unbounded
 # read into memory.
@@ -94,8 +97,8 @@ def query_author(name: str, category: str, max_results: int) -> dict:
             # Results are sorted most-recent-first, so once we're past the
             # cutoff every remaining entry is older still — stop here.
             break
-        title = " ".join((entry.findtext("a:title", default="", namespaces=ATOM_NS) or "").split())
-        abstract = " ".join((entry.findtext("a:summary", default="", namespaces=ATOM_NS) or "").split())
+        title = poll.normalize_latex_accents(" ".join((entry.findtext("a:title", default="", namespaces=ATOM_NS) or "").split()))
+        abstract = poll.normalize_latex_accents(" ".join((entry.findtext("a:summary", default="", namespaces=ATOM_NS) or "").split()))
         authors = [
             (a.findtext("a:name", default="", namespaces=ATOM_NS) or "").strip()
             for a in entry.findall("a:author", ATOM_NS)
@@ -131,12 +134,45 @@ def main() -> None:
         log("no authors given")
         return
 
+    # Growing a watched-authors list from N to N+1 used to re-query every
+    # existing name from scratch (with a rate-limit sleep before each),
+    # even though only the new one actually needs verifying. A name already
+    # confirmed to exist in this category isn't going to stop existing —
+    # only cache positive results, not negative ones, since an author with
+    # zero papers today could plausibly publish their first tomorrow and a
+    # cached "not found" would incorrectly keep hiding that.
+    cache = poll.load_author_cache()
     results = []
-    for i, name in enumerate(names):
-        if i > 0:
+    queried_live = 0
+    for name in names:
+        key = poll.author_cache_key(name, args.category)
+        cached = cache.get(key)
+        if cached:
+            log(f"'{name}' already verified for cat:{args.category} — skipping live check")
+            results.append({
+                "name": name,
+                "found": True,
+                "total_count": cached.get("total_count", 0),
+                # Not re-fetched for an already-verified author: poll.py's
+                # regular scan keeps their persistent candidate superset
+                # current going forward, so this is only ever needed once
+                # per author, not on every re-check of the whole list.
+                "recent": [],
+                "cached": True,
+            })
+            continue
+        if queried_live > 0:
             time.sleep(REQUEST_GAP_SECONDS)
+        queried_live += 1
         log(f"checking '{name}' in cat:{args.category}")
-        results.append(query_author(name, args.category, args.max_per_author))
+        result = query_author(name, args.category, args.max_per_author)
+        results.append(result)
+        if result.get("found"):
+            cache[key] = {
+                "total_count": result.get("total_count", 0),
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+            }
+    poll.write_author_cache(cache)
 
     all_recent = [p for r in results for p in r.get("recent", [])]
     if all_recent:
@@ -176,29 +212,40 @@ def merge_into_watched_matches(results: list[dict]) -> None:
     check-authors's whole reason to exist is poll.py's daily scan having no
     lookback — a validated author's papers need to actually show up in the
     widget, not just get reported here. Folds each result's backfilled
-    "recent" papers into state.json's watched_matches (same shape poll.py
-    itself writes), so the popup's watched-authors column reflects them
-    immediately instead of waiting for a coincidental same-day scan hit.
+    "recent" papers into the same persistent watched-candidates superset
+    poll.py's own scan writes to (not directly into state.json's displayed
+    watched_matches), then recomputes that displayed list as a fresh view
+    over the combined superset — same as poll.py's main() — so the popup
+    reflects them immediately instead of waiting for a coincidental
+    same-day scan hit, and stays consistent with whatever the current
+    config's caps/watched-authors list actually is.
     """
     config = poll.load_config()
     state = poll.load_state()
 
-    by_id = {m["id"]: m for m in state.get("watched_matches", [])}
-    for result in results:
-        for paper in result.get("recent", []):
-            by_id[paper["id"]] = {
-                "id": paper["id"],
-                "title": paper["title"],
-                "link": paper["link"],
-                "lead_author": paper.get("lead_author", ""),
-                "has_coauthors": paper.get("has_coauthors", False),
-                "published": paper.get("published", ""),
-                "summary": paper.get("summary", ""),
-                "matched_author": result["name"],
-                "watched": True,
-            }
+    new_entries = [
+        {
+            "id": paper["id"],
+            "title": paper["title"],
+            "link": paper["link"],
+            "lead_author": paper.get("lead_author", ""),
+            "has_coauthors": paper.get("has_coauthors", False),
+            "published": paper.get("published", ""),
+            "summary": paper.get("summary", ""),
+            "matched_author": result["name"],
+            "matched_config_name": result["name"],
+            "watched": True,
+        }
+        for result in results
+        for paper in result.get("recent", [])
+    ]
+    watched_candidates = poll.merge_watched_matches(poll.load_watched_candidates(), new_entries)
+    watched_candidates = poll.prune_watched_candidates(watched_candidates)
+    poll.write_watched_candidates(watched_candidates)
 
-    merged = sorted(by_id.values(), key=lambda m: m["published"], reverse=True)
+    merged = poll.filter_watched_for_config(watched_candidates, config["watchedAuthors"])
+    merged = poll.cap_per_author(merged, config.get("maxWatchedPerAuthor"))
+    merged = sorted(merged, key=lambda m: m["published"], reverse=True)
     merged = merged[:config["maxWatchedMatches"]]
     state["watched_matches"] = merged
 

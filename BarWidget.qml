@@ -90,6 +90,11 @@ BarWidget {
   readonly property var watchedAuthors: config.watchedAuthors || []
   readonly property int maxAreaMatches: config.maxAreaMatches !== undefined ? config.maxAreaMatches : 3
   readonly property int maxWatchedMatches: config.maxWatchedMatches !== undefined ? config.maxWatchedMatches : 3
+  // null/undefined = no per-author cap — a global top-N-most-recent
+  // ceiling with several watched authors otherwise lets whichever one
+  // publishes most often or most recently crowd the rest out of their own
+  // slots, rather than guaranteeing each watched author some visibility.
+  readonly property var maxWatchedPerAuthor: (config.maxWatchedPerAuthor !== undefined && config.maxWatchedPerAuthor !== null) ? config.maxWatchedPerAuthor : null
   readonly property string pollTime: config.pollTime || "07:00"
 
   // KeyboardPanel's own close() (outside click, Escape, popout-switch to
@@ -547,6 +552,7 @@ BarWidget {
                   authorsField.text = root.watchedAuthors.join(", ")
                   maxAreaField.text = String(root.maxAreaMatches)
                   maxWatchedField.text = String(root.maxWatchedMatches)
+                  maxWatchedPerAuthorField.text = root.maxWatchedPerAuthor !== null ? String(root.maxWatchedPerAuthor) : ""
                   pollTimeField.text = root.pollTime
                   root.saveStatus = ""
                 }
@@ -648,7 +654,9 @@ BarWidget {
                   text: (modelData.found ? "✓ " : "✗ ") + modelData.name
                     + (modelData.found
                       ? " — " + modelData.total_count + " paper(s) in " + root.category
-                        + (modelData.recent && modelData.recent.length > 0 ? ", " + modelData.recent.length + " in the last 30 days" : ", none in the last 30 days")
+                        + (modelData.cached
+                          ? " (already verified — skipped re-checking)"
+                          : (modelData.recent && modelData.recent.length > 0 ? ", " + modelData.recent.length + " in the last 30 days" : ", none in the last 30 days"))
                       : " — no papers found in " + root.category + ". Check spelling (arXiv wants \"Firstname Lastname\") or that they publish in this category.")
                   color: modelData.found ? Qt.darker(root.bar.foreground, 1.2) : Color.urgent
                   font.family: root.bar.fontFamily
@@ -665,7 +673,7 @@ BarWidget {
             spacing: Style.space(12)
 
             Column {
-              width: (parent.width - Style.space(24)) / 3
+              width: (parent.width - Style.space(36)) / 4
               spacing: Style.space(4)
               Text {
                 textFormat: Text.PlainText
@@ -683,7 +691,7 @@ BarWidget {
             }
 
             Column {
-              width: (parent.width - Style.space(24)) / 3
+              width: (parent.width - Style.space(36)) / 4
               spacing: Style.space(4)
               Text {
                 textFormat: Text.PlainText
@@ -701,7 +709,26 @@ BarWidget {
             }
 
             Column {
-              width: (parent.width - Style.space(24)) / 3
+              width: (parent.width - Style.space(36)) / 4
+              spacing: Style.space(4)
+              Text {
+                textFormat: Text.PlainText
+                text: "Per author (blank = no cap)"
+                color: Qt.darker(root.bar.foreground, 1.3)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.Wrap
+              }
+              TextField {
+                id: maxWatchedPerAuthorField
+                width: parent.width
+                placeholderText: "no cap"
+                validator: IntValidator { bottom: 1; top: 20 }
+              }
+            }
+
+            Column {
+              width: (parent.width - Style.space(36)) / 4
               spacing: Style.space(4)
               Text {
                 textFormat: Text.PlainText
@@ -732,6 +759,7 @@ BarWidget {
                     + " --authors " + root.shQuote(authorsField.text)
                     + " --max-area " + root.shQuote(maxAreaField.text || "3")
                     + " --max-watched " + root.shQuote(maxWatchedField.text || "3")
+                    + " --max-watched-per-author " + root.shQuote(maxWatchedPerAuthorField.text)
                     + " --poll-time " + root.shQuote(pollTimeField.text || "07:00")
                   root.bar.run(cmd)
                 }

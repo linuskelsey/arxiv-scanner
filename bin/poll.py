@@ -24,12 +24,30 @@ import tempfile
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 STATE_DIR = Path.home() / ".local/state/omarchy-arxiv-scanner"
 STATE_FILE = STATE_DIR / "state.json"
+# The durable superset of every paper ever found for a watched author —
+# distinct from state.json's watched_matches, which is a derived, capped
+# VIEW recomputed from this on every scan. Keeping the two separate means
+# removing a watched author, or raising a cap, takes effect immediately
+# against everything already known, without needing a fresh API backfill.
+WATCHED_CANDIDATES_FILE = STATE_DIR / "watched_candidates.json"
+MAX_WATCHED_CANDIDATES = 500
+# Matches check-authors.py's own backfill lookback (it imports this rather
+# than defining a separate constant) — the superset shouldn't hold a paper
+# check-authors.py itself would no longer consider "recent" for the same
+# author. Not currently user-configurable; queued as a follow-up (would
+# need to become a config field both here and in check-authors.py's own
+# --max-per-author-style CLI handling).
+MAX_WATCHED_CANDIDATE_AGE_DAYS = 30
+# Persistent record of which (name, category) pairs check-authors.py has
+# already confirmed exist on arXiv, so re-running it after adding one more
+# watched author doesn't re-query everyone already verified.
+AUTHOR_CACHE_FILE = STATE_DIR / "author_verify_cache.json"
 CONFIG_DIR = Path.home() / ".config/omarchy-arxiv-scanner"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 NOTIFIED_ID_CAP = 1000
@@ -52,6 +70,12 @@ DEFAULT_CONFIG = {
     ],
     "maxAreaMatches": 3,
     "maxWatchedMatches": 3,
+    # None = no per-author cap: with several watched authors, a global
+    # top-N-most-recent-overall cap lets whoever publishes most often or
+    # most recently crowd the rest out of their own slots entirely. Set to
+    # cap each watched author's papers independently before the shared
+    # maxWatchedMatches ceiling applies.
+    "maxWatchedPerAuthor": None,
     "watchedAuthors": [],
 }
 
@@ -219,24 +243,97 @@ def load_state() -> dict:
     return {}
 
 
-def write_state(state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    # Not a predictable "state.json.tmp": that name could be pre-planted as
-    # a symlink, and .write_text() follows it, truncating whatever it
-    # points at instead of a real temp file. mkstemp opens with O_CREAT |
-    # O_EXCL, which fails rather than following an existing path (symlink
-    # or otherwise), so this can only ever create a brand new file.
-    fd, tmp_path = tempfile.mkstemp(dir=STATE_DIR, prefix=".state.json.")
+def _atomic_write_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Not a predictable "<name>.tmp": that name could be pre-planted as a
+    # symlink, and .write_text() follows it, truncating whatever it points
+    # at instead of a real temp file. mkstemp opens with O_CREAT | O_EXCL,
+    # which fails rather than following an existing path (symlink or
+    # otherwise), so this can only ever create a brand new file.
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(state, indent=2))
-        os.replace(tmp_path, STATE_FILE)
+            f.write(json.dumps(data, indent=2))
+        os.replace(tmp_path, path)
     except BaseException:
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
         raise
+
+
+def write_state(state: dict) -> None:
+    _atomic_write_json(STATE_FILE, state)
+
+
+def load_watched_candidates() -> list[dict]:
+    if WATCHED_CANDIDATES_FILE.exists():
+        try:
+            data = json.loads(WATCHED_CANDIDATES_FILE.read_text())
+            if isinstance(data, list):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
+def write_watched_candidates(candidates: list[dict]) -> None:
+    _atomic_write_json(WATCHED_CANDIDATES_FILE, candidates)
+
+
+def prune_watched_candidates(candidates: list[dict]) -> list[dict]:
+    """
+    Bounds the persistent watched-author superset so a long-running
+    install with many watched authors can't grow it unboundedly — capped
+    by both age and count, oldest dropped first. Anything with an
+    unparseable or missing published date is dropped too, rather than kept
+    forever by default.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_WATCHED_CANDIDATE_AGE_DAYS)
+    kept = []
+    for c in candidates:
+        try:
+            pub = datetime.fromisoformat(c["published"].replace("Z", "+00:00"))
+        except (ValueError, KeyError, AttributeError, TypeError):
+            continue
+        if pub >= cutoff:
+            kept.append(c)
+    kept.sort(key=lambda m: m["published"], reverse=True)
+    return kept[:MAX_WATCHED_CANDIDATES]
+
+
+def filter_watched_for_config(candidates: list[dict], watched_authors: list[str]) -> list[dict]:
+    """
+    The persistent superset can carry papers matched against an author
+    who's since been removed from watchedAuthors. Filtered here, on every
+    read, against matched_config_name — the exact watchedAuthors string
+    that caused the match, not matched_author (the paper's own author-list
+    spelling, which can differ) — so removing a watched author drops their
+    papers from the displayed list on the very next scan, with nobody
+    needing to notice and manually re-check.
+    """
+    watched_l = {w.strip().lower() for w in watched_authors}
+    return [c for c in candidates if c.get("matched_config_name", "").strip().lower() in watched_l]
+
+
+def author_cache_key(name: str, category: str) -> str:
+    return f"{category.strip().lower()}::{name.strip().lower()}"
+
+
+def load_author_cache() -> dict:
+    if AUTHOR_CACHE_FILE.exists():
+        try:
+            data = json.loads(AUTHOR_CACHE_FILE.read_text())
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def write_author_cache(cache: dict) -> None:
+    _atomic_write_json(AUTHOR_CACHE_FILE, cache)
 
 
 def load_config() -> dict:
@@ -260,9 +357,122 @@ def load_config() -> dict:
                 config[key] = n
         except (TypeError, ValueError):
             pass
+    # Distinct from the two above: absent, null, or 0 all mean "no
+    # per-author cap" here rather than falling back to a default number,
+    # since unlimited is the actual desired default (only maxWatchedMatches
+    # applies) unless the user opts into capping.
+    raw_per_author = data.get("maxWatchedPerAuthor")
+    if raw_per_author not in (None, ""):
+        try:
+            n = int(raw_per_author)
+            config["maxWatchedPerAuthor"] = n if n > 0 else None
+        except (TypeError, ValueError):
+            pass
     if isinstance(data.get("watchedAuthors"), list):
         config["watchedAuthors"] = [a.strip() for a in data["watchedAuthors"] if isinstance(a, str) and a.strip()]
     return config
+
+
+ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5})(?:v(\d+))?")
+
+
+def canonical_arxiv_id(raw_id: str) -> tuple[str, int]:
+    """
+    Extracts (bare_id, version) from any of the id shapes we actually see:
+    "oai:arXiv.org:2609.34213v1" (RSS feed, poll.py), "http://arxiv.org/
+    abs/2609.34213v1" (Atom API, check-authors.py), etc. The same paper
+    turning up via both code paths — one on today's RSS scan, the other
+    via check-authors.py's on-demand backfill — used to show up twice in
+    watched_matches, keyed on these differing raw strings even though
+    they're the same paper. Falls back to (raw_id, 0) for anything that
+    doesn't match, so an unrecognized id still gets a stable, if unmerged,
+    key rather than crashing.
+    """
+    m = ARXIV_ID_RE.search(raw_id)
+    if not m:
+        return raw_id, 0
+    return m.group(1), int(m.group(2) or 0)
+
+
+def merge_watched_matches(existing: list[dict], new: list[dict]) -> list[dict]:
+    """
+    Combines watched-author entries from two batches (e.g. state.json's
+    existing watched_matches plus a fresh batch from either poll.py's daily
+    scan or check-authors.py's backfill), collapsing anything that's the
+    same underlying arXiv paper — regardless of which id format or which
+    revision it was found under — into one entry: whichever carries the
+    highest version number. A v2 replaces a previously-stored v1 outright
+    rather than sitting alongside it.
+    """
+    by_base: dict[str, dict] = {}
+    for m in existing + new:
+        base, version = canonical_arxiv_id(m["id"])
+        current = by_base.get(base)
+        if current is None or version >= canonical_arxiv_id(current["id"])[1]:
+            by_base[base] = m
+    return list(by_base.values())
+
+
+def cap_per_author(matches: list[dict], max_per_author: int | None) -> list[dict]:
+    """
+    Keeps at most max_per_author most-recent papers per matched_author,
+    applied before the shared maxWatchedMatches ceiling. Without this, that
+    ceiling is a global top-N-most-recent-overall across every watched
+    author combined — with several authors watched, whoever happens to
+    publish most often or most recently crowds the rest out of their own
+    slots entirely, rather than each author getting guaranteed visibility.
+    None (the default) or 0 disables this and returns matches unchanged.
+    """
+    if not max_per_author:
+        return matches
+    by_author: dict[str, list[dict]] = {}
+    for m in matches:
+        by_author.setdefault(m.get("matched_author", ""), []).append(m)
+    kept = []
+    for papers in by_author.values():
+        papers.sort(key=lambda m: m["published"], reverse=True)
+        kept.extend(papers[:max_per_author])
+    return kept
+
+
+_LATEX_ACCENTS = {
+    "'": {"a": "á", "e": "é", "i": "í", "o": "ó", "u": "ú", "y": "ý",
+          "A": "Á", "E": "É", "I": "Í", "O": "Ó", "U": "Ú", "Y": "Ý",
+          "n": "ń", "N": "Ń", "c": "ć", "C": "Ć", "s": "ś", "S": "Ś",
+          "z": "ź", "Z": "Ź", "l": "ĺ", "L": "Ĺ", "r": "ŕ", "R": "Ŕ"},
+    "`": {"a": "à", "e": "è", "i": "ì", "o": "ò", "u": "ù",
+          "A": "À", "E": "È", "I": "Ì", "O": "Ò", "U": "Ù"},
+    '"': {"a": "ä", "e": "ë", "i": "ï", "o": "ö", "u": "ü", "y": "ÿ",
+          "A": "Ä", "E": "Ë", "I": "Ï", "O": "Ö", "U": "Ü"},
+    "^": {"a": "â", "e": "ê", "i": "î", "o": "ô", "u": "û",
+          "A": "Â", "E": "Ê", "I": "Î", "O": "Ô", "U": "Û"},
+    "~": {"a": "ã", "n": "ñ", "o": "õ", "A": "Ã", "N": "Ñ", "O": "Õ"},
+    "c": {"c": "ç", "C": "Ç", "s": "ş", "S": "Ş"},
+    "v": {"c": "č", "C": "Č", "s": "š", "S": "Š", "z": "ž", "Z": "Ž",
+          "e": "ě", "E": "Ě", "r": "ř", "R": "Ř", "n": "ň", "N": "Ň"},
+    "u": {"a": "ă", "A": "Ă", "g": "ğ", "G": "Ğ"},
+    "H": {"o": "ő", "O": "Ő", "u": "ű", "U": "Ű"},
+    "k": {"a": "ą", "A": "Ą", "e": "ę", "E": "Ę"},
+}
+_LATEX_ACCENT_RE = re.compile(r"\\(['`\"^~cvuHk])\{?([A-Za-z])\}?")
+
+
+def normalize_latex_accents(text: str) -> str:
+    """
+    Some arXiv metadata — title fields especially, via the RSS feed —
+    ships with a raw, un-rendered LaTeX accent macro instead of the actual
+    character, e.g. "R\\'enyi" instead of "Rényi". That's an arXiv/
+    submission-metadata quality quirk (confirmed: the Atom API's title for
+    the same paper is properly decoded), not something specific to one
+    paper, so it's worth a best-effort general fix rather than a one-off
+    patch. Idempotent — already-correct Unicode text has nothing to match.
+    """
+    if not text:
+        return text
+    return _LATEX_ACCENT_RE.sub(
+        lambda m: _LATEX_ACCENTS.get(m.group(1), {}).get(m.group(2), m.group(0)),
+        text,
+    )
 
 
 def fetch_candidates(category: str) -> list[dict]:
@@ -281,9 +491,9 @@ def fetch_candidates(category: str) -> list[dict]:
             continue  # skip cross-listings and replacements, matching /list/<category>/new
 
         link = (item.findtext("link", default="") or "").strip()
-        title = " ".join((item.findtext("title", default="") or "").split())
+        title = normalize_latex_accents(" ".join((item.findtext("title", default="") or "").split()))
         description = item.findtext("description", default="") or ""
-        abstract = re.sub(r"^.*?Abstract:\s*", "", description, flags=re.DOTALL).strip()
+        abstract = normalize_latex_accents(re.sub(r"^.*?Abstract:\s*", "", description, flags=re.DOTALL).strip())
         guid = (item.findtext("guid", default="") or link).strip()
         creators = (item.findtext("dc:creator", default="", namespaces=RSS_NS) or "").strip()
         creator_list = [c.strip() for c in creators.split(",") if c.strip()]
@@ -331,6 +541,13 @@ def watched_author_matches(candidates: list[dict], watched: list[str]) -> list[d
                         # watched name can match a co-author further down
                         # the list, not whoever's listed first.
                         "matched_author": author,
+                        # The exact watchedAuthors config string that caused
+                        # this match (vs matched_author above, the paper's
+                        # own spelling) — used to re-filter the persistent
+                        # candidate superset against the *current* config on
+                        # every scan, so removing a watched author actually
+                        # drops their papers instead of them lingering.
+                        "matched_config_name": name,
                         "watched": True,
                         # Consumed by main()'s summarize_papers() call and
                         # dropped before this dict is ever written to state —
@@ -508,15 +725,24 @@ def main() -> None:
         for m in todays_watched:
             m["summary"] = summaries.get(m["id"], "")
 
-    # This scan only ever sees *today's* feed, but the watched-authors column
-    # is meant to read as "their N most recent papers" regardless of when
-    # each scan ran — so merge into whatever's already there (including
-    # check-authors.py's on-demand backfill) instead of replacing it outright,
-    # or a paper found today would just get evicted by tomorrow's empty scan.
-    by_id = {m["id"]: m for m in prev.get("watched_matches", [])}
-    for m in todays_watched:
-        by_id[m["id"]] = m
-    watched_matches = sorted(by_id.values(), key=lambda m: m["published"], reverse=True)
+    # Today's hits merge into the durable superset (never directly into the
+    # displayed list) — merge_watched_matches collapses the same paper found
+    # via both this scan and check-authors.py's backfill (different id
+    # formats for an identical paper) and lets a newer revision replace an
+    # older one instead of both showing up; prune_watched_candidates bounds
+    # the superset by age/count so it can't grow unboundedly over time.
+    watched_candidates = merge_watched_matches(load_watched_candidates(), todays_watched)
+    watched_candidates = prune_watched_candidates(watched_candidates)
+    write_watched_candidates(watched_candidates)
+
+    # The displayed watched_matches is a fresh VIEW recomputed from that
+    # superset on *every* scan — filtered against whichever authors are
+    # currently configured (so removing one drops their papers immediately,
+    # not just on the next manual re-check) and re-capped fresh (so a
+    # raised cap or a freed-up per-author slot fills back in on its own).
+    watched_matches = filter_watched_for_config(watched_candidates, config["watchedAuthors"])
+    watched_matches = cap_per_author(watched_matches, config.get("maxWatchedPerAuthor"))
+    watched_matches = sorted(watched_matches, key=lambda m: m["published"], reverse=True)
     watched_matches = watched_matches[:config["maxWatchedMatches"]]
 
     area_matches_all = classify(candidates, config["interestAreas"])
