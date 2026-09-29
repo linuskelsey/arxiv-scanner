@@ -52,6 +52,12 @@ DEFAULT_CONFIG = {
     ],
     "maxAreaMatches": 3,
     "maxWatchedMatches": 3,
+    # None = no per-author cap: with several watched authors, a global
+    # top-N-most-recent-overall cap lets whoever publishes most often or
+    # most recently crowd the rest out of their own slots entirely. Set to
+    # cap each watched author's papers independently before the shared
+    # maxWatchedMatches ceiling applies.
+    "maxWatchedPerAuthor": None,
     "watchedAuthors": [],
 }
 
@@ -260,6 +266,17 @@ def load_config() -> dict:
                 config[key] = n
         except (TypeError, ValueError):
             pass
+    # Distinct from the two above: absent, null, or 0 all mean "no
+    # per-author cap" here rather than falling back to a default number,
+    # since unlimited is the actual desired default (only maxWatchedMatches
+    # applies) unless the user opts into capping.
+    raw_per_author = data.get("maxWatchedPerAuthor")
+    if raw_per_author not in (None, ""):
+        try:
+            n = int(raw_per_author)
+            config["maxWatchedPerAuthor"] = n if n > 0 else None
+        except (TypeError, ValueError):
+            pass
     if isinstance(data.get("watchedAuthors"), list):
         config["watchedAuthors"] = [a.strip() for a in data["watchedAuthors"] if isinstance(a, str) and a.strip()]
     return config
@@ -303,6 +320,28 @@ def merge_watched_matches(existing: list[dict], new: list[dict]) -> list[dict]:
         if current is None or version >= canonical_arxiv_id(current["id"])[1]:
             by_base[base] = m
     return list(by_base.values())
+
+
+def cap_per_author(matches: list[dict], max_per_author: int | None) -> list[dict]:
+    """
+    Keeps at most max_per_author most-recent papers per matched_author,
+    applied before the shared maxWatchedMatches ceiling. Without this, that
+    ceiling is a global top-N-most-recent-overall across every watched
+    author combined — with several authors watched, whoever happens to
+    publish most often or most recently crowds the rest out of their own
+    slots entirely, rather than each author getting guaranteed visibility.
+    None (the default) or 0 disables this and returns matches unchanged.
+    """
+    if not max_per_author:
+        return matches
+    by_author: dict[str, list[dict]] = {}
+    for m in matches:
+        by_author.setdefault(m.get("matched_author", ""), []).append(m)
+    kept = []
+    for papers in by_author.values():
+        papers.sort(key=lambda m: m["published"], reverse=True)
+        kept.extend(papers[:max_per_author])
+    return kept
 
 
 _LATEX_ACCENTS = {
@@ -598,6 +637,7 @@ def main() -> None:
     # formats for an identical paper — and lets a newer revision replace an
     # older one instead of both showing up.
     watched_matches = merge_watched_matches(prev.get("watched_matches", []), todays_watched)
+    watched_matches = cap_per_author(watched_matches, config.get("maxWatchedPerAuthor"))
     watched_matches = sorted(watched_matches, key=lambda m: m["published"], reverse=True)
     watched_matches = watched_matches[:config["maxWatchedMatches"]]
 

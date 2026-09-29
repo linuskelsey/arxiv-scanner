@@ -5,7 +5,8 @@
 #
 # Usage: save-settings.sh --category quant-ph --interests "Area one, Area two" \
 #          --authors "Author One, Author Two" --max-area 3 --max-watched 3 \
-#          --poll-time 07:00
+#          --max-watched-per-author 2 --poll-time 07:00
+# --max-watched-per-author may be empty (no per-author cap).
 
 set -euo pipefail
 
@@ -25,6 +26,7 @@ INTERESTS=""
 AUTHORS=""
 MAX_AREA="3"
 MAX_WATCHED="3"
+MAX_WATCHED_PER_AUTHOR=""
 POLL_TIME="07:00"
 
 while [[ $# -gt 0 ]]; do
@@ -34,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --authors) AUTHORS="$2"; shift 2 ;;
     --max-area) MAX_AREA="$2"; shift 2 ;;
     --max-watched) MAX_WATCHED="$2"; shift 2 ;;
+    --max-watched-per-author) MAX_WATCHED_PER_AUTHOR="$2"; shift 2 ;;
     --poll-time) POLL_TIME="$2"; shift 2 ;;
     *) shift ;;
   esac
@@ -53,17 +56,20 @@ jq -n \
   --arg interests "$INTERESTS" \
   --arg authors "$AUTHORS" \
   --arg pollTime "$POLL_TIME" \
+  --arg maxPerAuthor "$MAX_WATCHED_PER_AUTHOR" \
   --argjson maxArea "${MAX_AREA:-3}" \
   --argjson maxWatched "${MAX_WATCHED:-3}" \
   '
   ($interests | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $interestList
   | ($authors | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $authorList
+  | ($maxPerAuthor | gsub("^\\s+|\\s+$"; "")) as $maxPerAuthorTrimmed
   | {
       category: ($category | gsub("^\\s+|\\s+$"; "")),
       interestAreas: $interestList,
       watchedAuthors: $authorList,
       maxAreaMatches: $maxArea,
       maxWatchedMatches: $maxWatched,
+      maxWatchedPerAuthor: (if ($maxPerAuthorTrimmed | length) > 0 then ($maxPerAuthorTrimmed | tonumber) else null end),
       pollTime: $pollTime
     }
   ' > "$TMP_FILE"

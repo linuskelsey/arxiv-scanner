@@ -203,6 +203,7 @@ def merge_into_watched_matches(results: list[dict]) -> None:
     # paper — and lets a newer revision replace an older one instead of
     # both showing up.
     merged = poll.merge_watched_matches(state.get("watched_matches", []), new_entries)
+    merged = poll.cap_per_author(merged, config.get("maxWatchedPerAuthor"))
     merged = sorted(merged, key=lambda m: m["published"], reverse=True)
     merged = merged[:config["maxWatchedMatches"]]
     state["watched_matches"] = merged
