@@ -1,0 +1,10 @@
+[Unit]
+Description=Run arXiv new-submissions scan every morning
+
+[Timer]
+OnCalendar=*-*-* 07:30:00
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target
