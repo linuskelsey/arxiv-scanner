@@ -14,9 +14,13 @@ bar widget to read, and fires a desktop notification when new matches are
 found.
 """
 import json
+import os
 import re
+import selectors
+import signal
 import subprocess
 import sys
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -58,6 +62,87 @@ RSS_NS = {
 
 def log(msg: str) -> None:
     print(f"[arxiv-scanner] {msg}", file=sys.stderr)
+
+
+class ClaudeOutputTooLarge(subprocess.SubprocessError):
+    pass
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    # proc.kill() only signals the direct child. claude (or the shell/tool
+    # wrapper a `claude` shim might be) can have children of its own, which
+    # would otherwise be orphaned and keep running past the timeout/cap that
+    # was supposed to stop them. start_new_session=True below puts the whole
+    # tree in its own process group so this reaches all of it.
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def run_claude(prompt: str, timeout: float, max_bytes: int = MAX_CLAUDE_OUTPUT_CHARS) -> subprocess.CompletedProcess:
+    """
+    subprocess.run(["claude", ...], capture_output=True) but the max_bytes
+    cap is enforced while reading the child's stdout/stderr pipes, not by
+    truncating a string after the full output has already been buffered in
+    memory — a misbehaving or compromised claude process gets killed the
+    moment it crosses the cap rather than being allowed to keep writing.
+    Raises ClaudeOutputTooLarge (a subprocess.SubprocessError, so existing
+    `except subprocess.SubprocessError` call sites catch it without change)
+    if either stream exceeds max_bytes, and subprocess.TimeoutExpired on
+    the same wall-clock deadline subprocess.run would have used.
+    """
+    proc = subprocess.Popen(
+        ["claude", "-p", "--output-format", "text"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
+    )
+    try:
+        try:
+            proc.stdin.write(prompt)
+        except BrokenPipeError:
+            pass
+        finally:
+            proc.stdin.close()
+
+        sel = selectors.DefaultSelector()
+        sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
+        sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
+        chunks = {"stdout": [], "stderr": []}
+        sizes = {"stdout": 0, "stderr": 0}
+        open_streams = {proc.stdout, proc.stderr}
+        deadline = time.monotonic() + timeout
+
+        while open_streams:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _kill_process_group(proc)
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            for key, _ in sel.select(timeout=min(remaining, 1.0)):
+                stream = key.fileobj
+                name = key.data
+                chunk = stream.read(65536)
+                if chunk == "":
+                    sel.unregister(stream)
+                    open_streams.discard(stream)
+                    continue
+                sizes[name] += len(chunk)
+                if sizes[name] > max_bytes:
+                    _kill_process_group(proc)
+                    raise ClaudeOutputTooLarge(f"claude {name} exceeded {max_bytes} bytes")
+                chunks[name].append(chunk)
+
+        returncode = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+        return subprocess.CompletedProcess(
+            proc.args, returncode, "".join(chunks["stdout"]), "".join(chunks["stderr"])
+        )
+    finally:
+        if proc.poll() is None:
+            _kill_process_group(proc)
 
 
 def load_state() -> dict:
@@ -217,16 +302,9 @@ def summarize_papers(papers: list[dict]) -> dict[str, str]:
         return {}
     summaries: dict[str, str] = {}
     try:
-        result = subprocess.run(
-            ["claude", "-p", "--output-format", "text"],
-            input=build_summary_prompt(papers),
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+        result = run_claude(build_summary_prompt(papers), timeout=120)
         if result.returncode == 0:
-            stdout = result.stdout[:MAX_CLAUDE_OUTPUT_CHARS]
-            match = re.search(r"\[.*\]", stdout.strip(), re.DOTALL)
+            match = re.search(r"\[.*\]", result.stdout.strip(), re.DOTALL)
             if match:
                 for item in json.loads(match.group(0)):
                     if isinstance(item, dict) and item.get("id"):
@@ -268,13 +346,7 @@ def classify(candidates: list[dict], interest_areas: list[str]) -> list[dict]:
         return []
     prompt = build_prompt(candidates, interest_areas)
     try:
-        result = subprocess.run(
-            ["claude", "-p", "--output-format", "text"],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
+        result = run_claude(prompt, timeout=180)
     except (subprocess.SubprocessError, OSError) as e:
         log(f"claude invocation failed: {e}")
         return []
@@ -283,7 +355,7 @@ def classify(candidates: list[dict], interest_areas: list[str]) -> list[dict]:
         log(f"claude exited {result.returncode}: {result.stderr[:400]}")
         return []
 
-    text = result.stdout[:MAX_CLAUDE_OUTPUT_CHARS].strip()
+    text = result.stdout.strip()
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if not match:
         log(f"no JSON array in claude output: {text[:400]}")

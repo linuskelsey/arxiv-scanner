@@ -1,5 +1,8 @@
 [Unit]
 Description=arXiv new-submissions scan (Omarchy plugin)
+# Managed-By: prometheus.arxiv-scanner — install.sh/uninstall.sh check for
+# this line before overwriting or removing this unit, so a same-named unit
+# from something else is never touched. Do not remove this line by hand.
 
 [Service]
 Type=oneshot

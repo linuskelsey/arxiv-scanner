@@ -25,6 +25,13 @@ install_file_safe() {
   mv -f "$tmp" "$dest"
 }
 
+# A same-named unit at the destination might not be ours — some other
+# plugin's install, or something the user wrote by hand. Both shipped unit
+# files carry this marker comment; only touch (overwrite, enable, remove)
+# a unit that has it.
+MARKER="# Managed-By: prometheus.arxiv-scanner"
+is_ours() { [[ -f "$1" ]] && grep -qF "$MARKER" "$1"; }
+
 echo "Installing arxiv-scanner plugin from $PLUGIN_DIR"
 
 missing=()
@@ -47,20 +54,37 @@ else
 fi
 
 mkdir -p "$SYSTEMD_DIR"
+SERVICE_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner.service"
+TIMER_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner.timer"
+
 # The .service is static (just invokes poll.py, never user-edited) so it's
-# always safe to refresh. The .timer is NOT: save-settings.sh rewrites its
-# OnCalendar line whenever the Settings panel's scan-time field changes, so
-# blindly overwriting it on every install.sh re-run would silently discard
-# that. Only install it if it's not already there.
-install_file_safe "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.service" "$SYSTEMD_DIR/omarchy-arxiv-scanner.service"
-if [[ ! -e "$SYSTEMD_DIR/omarchy-arxiv-scanner.timer" && ! -L "$SYSTEMD_DIR/omarchy-arxiv-scanner.timer" ]]; then
-  install_file_safe "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.timer" "$SYSTEMD_DIR/omarchy-arxiv-scanner.timer"
+# always safe to refresh — but only if whatever's currently at that path is
+# ours (or nothing's there yet); never overwrite an unrelated same-named unit.
+if [[ ! -e "$SERVICE_DEST" && ! -L "$SERVICE_DEST" ]] || is_ours "$SERVICE_DEST"; then
+  install_file_safe "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.service" "$SERVICE_DEST"
 else
-  echo "Existing timer found at $SYSTEMD_DIR/omarchy-arxiv-scanner.timer — leaving it alone (it may hold a scan time you set via the widget's Settings panel)."
+  echo "Warning: $SERVICE_DEST already exists and wasn't installed by this plugin — leaving it alone. Scanning won't be scheduled until that's resolved." >&2
+fi
+
+# The .timer is different again: save-settings.sh rewrites its OnCalendar
+# line whenever the Settings panel's scan-time field changes, so blindly
+# overwriting an existing one on every install.sh re-run would silently
+# discard that. Only install it if it's not already there.
+if [[ ! -e "$TIMER_DEST" && ! -L "$TIMER_DEST" ]]; then
+  install_file_safe "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.timer" "$TIMER_DEST"
+elif is_ours "$TIMER_DEST"; then
+  echo "Existing timer found at $TIMER_DEST — leaving it alone (it may hold a scan time you set via the widget's Settings panel)."
+else
+  echo "Warning: $TIMER_DEST already exists and wasn't installed by this plugin — leaving it alone and not enabling it." >&2
 fi
 
 systemctl --user daemon-reload
-systemctl --user enable --now omarchy-arxiv-scanner.timer
 
-echo "Done. Timer enabled — first automatic scan runs at the next scheduled time (07:30 by default, or use 'Scan now' in the widget right away)."
+if is_ours "$SERVICE_DEST" && is_ours "$TIMER_DEST"; then
+  systemctl --user enable --now omarchy-arxiv-scanner.timer
+  echo "Done. Timer enabled — first automatic scan runs at the next scheduled time (07:30 by default, or use 'Scan now' in the widget right away)."
+else
+  echo "Skipped enabling the timer — resolve the unit-name conflict above, then re-run install.sh." >&2
+fi
+
 echo "If the bar icon doesn't show up yet, restart the shell: omarchy-restart-shell"

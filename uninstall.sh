@@ -5,9 +5,28 @@
 set -euo pipefail
 
 SYSTEMD_DIR="$HOME/.config/systemd/user"
+SERVICE_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner.service"
+TIMER_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner.timer"
 
-systemctl --user disable --now omarchy-arxiv-scanner.timer 2>/dev/null || true
-rm -f "$SYSTEMD_DIR/omarchy-arxiv-scanner.service" "$SYSTEMD_DIR/omarchy-arxiv-scanner.timer"
+# Same-named units at these paths might not be ours — don't disable, stop,
+# or delete anything install.sh didn't actually put there. Both shipped
+# unit files carry this marker comment.
+MARKER="# Managed-By: prometheus.arxiv-scanner"
+is_ours() { [[ -f "$1" ]] && grep -qF "$MARKER" "$1"; }
+
+if is_ours "$TIMER_DEST"; then
+  systemctl --user disable --now omarchy-arxiv-scanner.timer 2>/dev/null || true
+  rm -f "$TIMER_DEST"
+else
+  echo "No timer at $TIMER_DEST installed by this plugin — nothing to remove there." >&2
+fi
+
+if is_ours "$SERVICE_DEST"; then
+  rm -f "$SERVICE_DEST"
+else
+  echo "No service at $SERVICE_DEST installed by this plugin — nothing to remove there." >&2
+fi
+
 systemctl --user daemon-reload
 
 echo "Timer stopped and unit files removed."
