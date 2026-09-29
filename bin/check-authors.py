@@ -21,8 +21,10 @@ Usage: check-authors.py --authors "Name One, Name Two" --category quant-ph [--ma
 """
 import argparse
 import json
+import os
 import re
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -147,13 +149,24 @@ def main() -> None:
             del p["abstract"]
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = RESULT_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({
-        "checked_at": datetime.now(timezone.utc).isoformat(),
-        "category": args.category,
-        "results": results,
-    }, indent=2))
-    tmp.replace(RESULT_FILE)
+    # See poll.write_state's comment: mkstemp (O_CREAT | O_EXCL), not a
+    # predictable "*.json.tmp" that a pre-planted symlink could turn into a
+    # write through to an arbitrary file.
+    fd, tmp_path = tempfile.mkstemp(dir=STATE_DIR, prefix=".author_check.json.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps({
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+                "category": args.category,
+                "results": results,
+            }, indent=2))
+        os.replace(tmp_path, RESULT_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
     merge_into_watched_matches(results)
 

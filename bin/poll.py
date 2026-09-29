@@ -20,6 +20,7 @@ import selectors
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -192,9 +193,22 @@ def load_state() -> dict:
 
 def write_state(state: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2))
-    tmp.replace(STATE_FILE)
+    # Not a predictable "state.json.tmp": that name could be pre-planted as
+    # a symlink, and .write_text() follows it, truncating whatever it
+    # points at instead of a real temp file. mkstemp opens with O_CREAT |
+    # O_EXCL, which fails rather than following an existing path (symlink
+    # or otherwise), so this can only ever create a brand new file.
+    fd, tmp_path = tempfile.mkstemp(dir=STATE_DIR, prefix=".state.json.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(state, indent=2))
+        os.replace(tmp_path, STATE_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def load_config() -> dict:
