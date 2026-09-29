@@ -65,6 +65,45 @@ timer whose scan time you've already customized. It:
 If the bar icon doesn't appear afterward, restart the shell:
 `omarchy-restart-shell`.
 
+## Upgrading from before the watched-candidates superset
+
+If you're updating an existing install from a version before the
+watched-authors list was backed by a persistent superset
+(`watched_candidates.json`), run this once after pulling the update —
+otherwise the first scan after upgrading recomputes `watched_matches` from
+an empty superset and your currently-displayed watched-author papers
+briefly disappear until fresh ones are found:
+
+```bash
+python3 -c "
+import sys
+sys.path.insert(0, '$HOME/.config/omarchy/plugins/prometheus.arxiv-scanner/bin')
+import json, poll
+
+state = json.loads(poll.STATE_FILE.read_text())
+current = state.get('watched_matches', [])
+config = poll.load_config()
+watched = config['watchedAuthors']
+for m in current:
+    if 'matched_config_name' in m:
+        continue
+    ma = m.get('matched_author', '').lower()
+    for name in watched:
+        if name.lower() in ma or ma in name.lower():
+            m['matched_config_name'] = name
+            break
+
+merged = poll.prune_watched_candidates(poll.merge_watched_matches(poll.load_watched_candidates(), current))
+poll.write_watched_candidates(merged)
+print(f'seeded watched_candidates.json with {len(merged)} entries')
+"
+```
+
+This backfills `matched_config_name` (the field the new filtering logic
+keys on) from each entry's `matched_author` by re-running the same
+fuzzy name-matching `watched_author_matches()` itself uses, so nothing
+that's already displayed gets silently dropped by the migration.
+
 ## Uninstall
 
 ```bash
