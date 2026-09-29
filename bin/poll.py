@@ -28,6 +28,14 @@ STATE_FILE = STATE_DIR / "state.json"
 CONFIG_DIR = Path.home() / ".config/omarchy-arxiv-scanner"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 NOTIFIED_ID_CAP = 1000
+# arXiv's new-submissions RSS for one category is a few hundred KB at most.
+# Cap well above that so a misbehaving/compromised endpoint can't force an
+# unbounded read into memory.
+MAX_FEED_BYTES = 5_000_000
+# A batch of paper summaries should be a few KB of JSON. Truncate before any
+# parsing or storage so a runaway Claude process can't get unbounded output
+# written into the persistent state file.
+MAX_CLAUDE_OUTPUT_CHARS = 200_000
 
 DEFAULT_CONFIG = {
     "category": "quant-ph",
@@ -98,7 +106,9 @@ def fetch_candidates(category: str) -> list[dict]:
     feed_url = f"https://rss.arxiv.org/rss/{category}"
     req = urllib.request.Request(feed_url, headers={"User-Agent": "omarchy-arxiv-scanner/1.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
-        raw = resp.read()
+        raw = resp.read(MAX_FEED_BYTES + 1)
+    if len(raw) > MAX_FEED_BYTES:
+        raise ValueError(f"feed response exceeded {MAX_FEED_BYTES} bytes, aborting")
     root = ET.fromstring(raw)
 
     candidates = []
@@ -215,7 +225,8 @@ def summarize_papers(papers: list[dict]) -> dict[str, str]:
             timeout=120,
         )
         if result.returncode == 0:
-            match = re.search(r"\[.*\]", result.stdout.strip(), re.DOTALL)
+            stdout = result.stdout[:MAX_CLAUDE_OUTPUT_CHARS]
+            match = re.search(r"\[.*\]", stdout.strip(), re.DOTALL)
             if match:
                 for item in json.loads(match.group(0)):
                     if isinstance(item, dict) and item.get("id"):
@@ -272,7 +283,7 @@ def classify(candidates: list[dict], interest_areas: list[str]) -> list[dict]:
         log(f"claude exited {result.returncode}: {result.stderr[:400]}")
         return []
 
-    text = result.stdout.strip()
+    text = result.stdout[:MAX_CLAUDE_OUTPUT_CHARS].strip()
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if not match:
         log(f"no JSON array in claude output: {text[:400]}")

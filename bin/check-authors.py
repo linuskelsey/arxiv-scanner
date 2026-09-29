@@ -44,6 +44,10 @@ REQUEST_GAP_SECONDS = 3
 # (found / total_count) stays unbounded so a prolific-but-currently-quiet
 # author still confirms as a real, correctly-spelled name.
 MAX_BACKFILL_DAYS = 30
+# arXiv's per-author API response is small (a handful of entries). Cap well
+# above that so a misbehaving/compromised endpoint can't force an unbounded
+# read into memory.
+MAX_RESPONSE_BYTES = 5_000_000
 
 
 def log(msg: str) -> None:
@@ -62,7 +66,9 @@ def query_author(name: str, category: str, max_results: int) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": "omarchy-arxiv-scanner/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
-            raw = resp.read()
+            raw = resp.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise ValueError(f"response exceeded {MAX_RESPONSE_BYTES} bytes, aborting")
     except Exception as e:
         log(f"query failed for '{name}': {e}")
         return {"name": name, "found": False, "total_count": 0, "recent": [], "error": str(e)}

@@ -14,6 +14,17 @@ PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="$HOME/.config/omarchy-arxiv-scanner"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 
+# Copies $1 to $2 via mktemp+mv in the destination directory rather than a
+# direct `cp` onto a predictable path. A predictable destination can be
+# pre-planted as a symlink; `cp` follows it and writes through to whatever
+# it points at, `mv` replaces the directory entry itself atomically instead.
+install_file_safe() {
+  local src="$1" dest="$2" tmp
+  tmp="$(mktemp "$(dirname "$dest")/.tmp.XXXXXX")"
+  cp "$src" "$tmp"
+  mv -f "$tmp" "$dest"
+}
+
 echo "Installing arxiv-scanner plugin from $PLUGIN_DIR"
 
 missing=()
@@ -28,8 +39,8 @@ fi
 command -v omarchy >/dev/null 2>&1 || echo "Note: 'omarchy' command not found — desktop notifications on match will silently no-op. Fine if you're not running Omarchy's shell." >&2
 
 mkdir -p "$CONFIG_DIR"
-if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
-  cp "$PLUGIN_DIR/config.example.json" "$CONFIG_DIR/config.json"
+if [[ ! -e "$CONFIG_DIR/config.json" && ! -L "$CONFIG_DIR/config.json" ]]; then
+  install_file_safe "$PLUGIN_DIR/config.example.json" "$CONFIG_DIR/config.json"
   echo "Wrote default config to $CONFIG_DIR/config.json — edit interest areas and watched authors there, or from the bar widget's Settings panel."
 else
   echo "Existing config found at $CONFIG_DIR/config.json — leaving it alone."
@@ -41,9 +52,9 @@ mkdir -p "$SYSTEMD_DIR"
 # OnCalendar line whenever the Settings panel's scan-time field changes, so
 # blindly overwriting it on every install.sh re-run would silently discard
 # that. Only install it if it's not already there.
-cp "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.service" "$SYSTEMD_DIR/"
-if [[ ! -f "$SYSTEMD_DIR/omarchy-arxiv-scanner.timer" ]]; then
-  cp "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.timer" "$SYSTEMD_DIR/"
+install_file_safe "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.service" "$SYSTEMD_DIR/omarchy-arxiv-scanner.service"
+if [[ ! -e "$SYSTEMD_DIR/omarchy-arxiv-scanner.timer" && ! -L "$SYSTEMD_DIR/omarchy-arxiv-scanner.timer" ]]; then
+  install_file_safe "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.timer" "$SYSTEMD_DIR/omarchy-arxiv-scanner.timer"
 else
   echo "Existing timer found at $SYSTEMD_DIR/omarchy-arxiv-scanner.timer — leaving it alone (it may hold a scan time you set via the widget's Settings panel)."
 fi

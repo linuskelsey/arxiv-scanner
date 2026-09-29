@@ -34,6 +34,13 @@ done
 
 mkdir -p "$CONFIG_DIR"
 
+# mktemp, not a predictable "$CONFIG_FILE.tmp" — a fixed temp-file name in a
+# user-writable directory can be pre-planted as a symlink, so writing
+# through it clobbers whatever that symlink points at instead of just
+# CONFIG_FILE. mktemp's random name plus atomic create-and-open closes that.
+TMP_FILE="$(mktemp "$CONFIG_DIR/.config.json.XXXXXX")"
+trap 'rm -f "$TMP_FILE"' EXIT
+
 jq -n \
   --arg category "$CATEGORY" \
   --arg interests "$INTERESTS" \
@@ -52,8 +59,8 @@ jq -n \
       maxWatchedMatches: $maxWatched,
       pollTime: $pollTime
     }
-  ' > "$CONFIG_FILE.tmp"
-mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+  ' > "$TMP_FILE"
+mv -f "$TMP_FILE" "$CONFIG_FILE"
 
 # Only touch the timer if poll time is a valid HH:MM and actually differs —
 # a systemctl restart on every settings save (even unrelated ones) would

@@ -28,17 +28,26 @@ list.
 - `python3`
 - `jq` (used by the settings-save script)
 - [`claude`](https://claude.com/claude-code) on `PATH` and logged in — used
-  headlessly (`claude -p`) for ranking and summarizing; without it the
-  widget falls back to a naive first-sentence trim, which still works but
-  won't do relevance filtering
+  headlessly (`claude -p`) for both relevance ranking and summarizing.
+  **Relevance filtering has no fallback**: without `claude`, the "Recent
+  papers of interest" column stays empty every scan. The separate watched
+  authors list still works either way — its summaries just fall back to a
+  naive first-sentence trim of the abstract instead of a Claude-written one
 - `omarchy` CLI for desktop notifications (present by default on Omarchy;
   notifications just no-op without it)
 
 ## Install
 
+> **Manual setup required.** If you're adding this through the Omarchy
+> plugin marketplace's standard flow, that only places the plugin files in
+> `~/.config/omarchy/plugins/` — it does not run `install.sh`. Scheduling
+> (the daily scan) won't start until you run it yourself, once, as below.
+
 ```bash
-git clone <this-repo-url> ~/.config/omarchy/plugins/prometheus.arxiv-scanner
-~/.config/omarchy/plugins/prometheus.arxiv-scanner/install.sh
+git clone https://github.com/linuskelsey/arxiv-scanner.git ~/.config/omarchy/plugins/prometheus.arxiv-scanner
+cd ~/.config/omarchy/plugins/prometheus.arxiv-scanner
+git checkout v1.0.1  # pin to a specific tagged release rather than a moving branch
+./install.sh
 ```
 
 `install.sh` is safe to re-run. It never overwrites your existing config or a

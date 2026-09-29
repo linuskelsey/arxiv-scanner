@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "prometheus.arxiv-scanner",
   "name": "arXiv Scanner",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "linuskelsey",
   "description": "Daily scan of new arXiv submissions in a category of your choice, classified by Claude against your own interest areas, with a bar badge and notification on matches.",
   "kinds": ["bar-widget"],
