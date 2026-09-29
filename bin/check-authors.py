@@ -94,8 +94,8 @@ def query_author(name: str, category: str, max_results: int) -> dict:
             # Results are sorted most-recent-first, so once we're past the
             # cutoff every remaining entry is older still — stop here.
             break
-        title = " ".join((entry.findtext("a:title", default="", namespaces=ATOM_NS) or "").split())
-        abstract = " ".join((entry.findtext("a:summary", default="", namespaces=ATOM_NS) or "").split())
+        title = poll.normalize_latex_accents(" ".join((entry.findtext("a:title", default="", namespaces=ATOM_NS) or "").split()))
+        abstract = poll.normalize_latex_accents(" ".join((entry.findtext("a:summary", default="", namespaces=ATOM_NS) or "").split()))
         authors = [
             (a.findtext("a:name", default="", namespaces=ATOM_NS) or "").strip()
             for a in entry.findall("a:author", ATOM_NS)
@@ -183,22 +183,27 @@ def merge_into_watched_matches(results: list[dict]) -> None:
     config = poll.load_config()
     state = poll.load_state()
 
-    by_id = {m["id"]: m for m in state.get("watched_matches", [])}
-    for result in results:
-        for paper in result.get("recent", []):
-            by_id[paper["id"]] = {
-                "id": paper["id"],
-                "title": paper["title"],
-                "link": paper["link"],
-                "lead_author": paper.get("lead_author", ""),
-                "has_coauthors": paper.get("has_coauthors", False),
-                "published": paper.get("published", ""),
-                "summary": paper.get("summary", ""),
-                "matched_author": result["name"],
-                "watched": True,
-            }
-
-    merged = sorted(by_id.values(), key=lambda m: m["published"], reverse=True)
+    new_entries = [
+        {
+            "id": paper["id"],
+            "title": paper["title"],
+            "link": paper["link"],
+            "lead_author": paper.get("lead_author", ""),
+            "has_coauthors": paper.get("has_coauthors", False),
+            "published": paper.get("published", ""),
+            "summary": paper.get("summary", ""),
+            "matched_author": result["name"],
+            "watched": True,
+        }
+        for result in results
+        for paper in result.get("recent", [])
+    ]
+    # poll.merge_watched_matches collapses the same paper found here and by
+    # poll.py's own scan — they use different id formats for an identical
+    # paper — and lets a newer revision replace an older one instead of
+    # both showing up.
+    merged = poll.merge_watched_matches(state.get("watched_matches", []), new_entries)
+    merged = sorted(merged, key=lambda m: m["published"], reverse=True)
     merged = merged[:config["maxWatchedMatches"]]
     state["watched_matches"] = merged
 

@@ -265,6 +265,86 @@ def load_config() -> dict:
     return config
 
 
+ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5})(?:v(\d+))?")
+
+
+def canonical_arxiv_id(raw_id: str) -> tuple[str, int]:
+    """
+    Extracts (bare_id, version) from any of the id shapes we actually see:
+    "oai:arXiv.org:2609.34213v1" (RSS feed, poll.py), "http://arxiv.org/
+    abs/2609.34213v1" (Atom API, check-authors.py), etc. The same paper
+    turning up via both code paths — one on today's RSS scan, the other
+    via check-authors.py's on-demand backfill — used to show up twice in
+    watched_matches, keyed on these differing raw strings even though
+    they're the same paper. Falls back to (raw_id, 0) for anything that
+    doesn't match, so an unrecognized id still gets a stable, if unmerged,
+    key rather than crashing.
+    """
+    m = ARXIV_ID_RE.search(raw_id)
+    if not m:
+        return raw_id, 0
+    return m.group(1), int(m.group(2) or 0)
+
+
+def merge_watched_matches(existing: list[dict], new: list[dict]) -> list[dict]:
+    """
+    Combines watched-author entries from two batches (e.g. state.json's
+    existing watched_matches plus a fresh batch from either poll.py's daily
+    scan or check-authors.py's backfill), collapsing anything that's the
+    same underlying arXiv paper — regardless of which id format or which
+    revision it was found under — into one entry: whichever carries the
+    highest version number. A v2 replaces a previously-stored v1 outright
+    rather than sitting alongside it.
+    """
+    by_base: dict[str, dict] = {}
+    for m in existing + new:
+        base, version = canonical_arxiv_id(m["id"])
+        current = by_base.get(base)
+        if current is None or version >= canonical_arxiv_id(current["id"])[1]:
+            by_base[base] = m
+    return list(by_base.values())
+
+
+_LATEX_ACCENTS = {
+    "'": {"a": "á", "e": "é", "i": "í", "o": "ó", "u": "ú", "y": "ý",
+          "A": "Á", "E": "É", "I": "Í", "O": "Ó", "U": "Ú", "Y": "Ý",
+          "n": "ń", "N": "Ń", "c": "ć", "C": "Ć", "s": "ś", "S": "Ś",
+          "z": "ź", "Z": "Ź", "l": "ĺ", "L": "Ĺ", "r": "ŕ", "R": "Ŕ"},
+    "`": {"a": "à", "e": "è", "i": "ì", "o": "ò", "u": "ù",
+          "A": "À", "E": "È", "I": "Ì", "O": "Ò", "U": "Ù"},
+    '"': {"a": "ä", "e": "ë", "i": "ï", "o": "ö", "u": "ü", "y": "ÿ",
+          "A": "Ä", "E": "Ë", "I": "Ï", "O": "Ö", "U": "Ü"},
+    "^": {"a": "â", "e": "ê", "i": "î", "o": "ô", "u": "û",
+          "A": "Â", "E": "Ê", "I": "Î", "O": "Ô", "U": "Û"},
+    "~": {"a": "ã", "n": "ñ", "o": "õ", "A": "Ã", "N": "Ñ", "O": "Õ"},
+    "c": {"c": "ç", "C": "Ç", "s": "ş", "S": "Ş"},
+    "v": {"c": "č", "C": "Č", "s": "š", "S": "Š", "z": "ž", "Z": "Ž",
+          "e": "ě", "E": "Ě", "r": "ř", "R": "Ř", "n": "ň", "N": "Ň"},
+    "u": {"a": "ă", "A": "Ă", "g": "ğ", "G": "Ğ"},
+    "H": {"o": "ő", "O": "Ő", "u": "ű", "U": "Ű"},
+    "k": {"a": "ą", "A": "Ą", "e": "ę", "E": "Ę"},
+}
+_LATEX_ACCENT_RE = re.compile(r"\\(['`\"^~cvuHk])\{?([A-Za-z])\}?")
+
+
+def normalize_latex_accents(text: str) -> str:
+    """
+    Some arXiv metadata — title fields especially, via the RSS feed —
+    ships with a raw, un-rendered LaTeX accent macro instead of the actual
+    character, e.g. "R\\'enyi" instead of "Rényi". That's an arXiv/
+    submission-metadata quality quirk (confirmed: the Atom API's title for
+    the same paper is properly decoded), not something specific to one
+    paper, so it's worth a best-effort general fix rather than a one-off
+    patch. Idempotent — already-correct Unicode text has nothing to match.
+    """
+    if not text:
+        return text
+    return _LATEX_ACCENT_RE.sub(
+        lambda m: _LATEX_ACCENTS.get(m.group(1), {}).get(m.group(2), m.group(0)),
+        text,
+    )
+
+
 def fetch_candidates(category: str) -> list[dict]:
     feed_url = f"https://rss.arxiv.org/rss/{category}"
     req = urllib.request.Request(feed_url, headers={"User-Agent": "omarchy-arxiv-scanner/1.0"})
@@ -281,9 +361,9 @@ def fetch_candidates(category: str) -> list[dict]:
             continue  # skip cross-listings and replacements, matching /list/<category>/new
 
         link = (item.findtext("link", default="") or "").strip()
-        title = " ".join((item.findtext("title", default="") or "").split())
+        title = normalize_latex_accents(" ".join((item.findtext("title", default="") or "").split()))
         description = item.findtext("description", default="") or ""
-        abstract = re.sub(r"^.*?Abstract:\s*", "", description, flags=re.DOTALL).strip()
+        abstract = normalize_latex_accents(re.sub(r"^.*?Abstract:\s*", "", description, flags=re.DOTALL).strip())
         guid = (item.findtext("guid", default="") or link).strip()
         creators = (item.findtext("dc:creator", default="", namespaces=RSS_NS) or "").strip()
         creator_list = [c.strip() for c in creators.split(",") if c.strip()]
@@ -513,10 +593,12 @@ def main() -> None:
     # each scan ran — so merge into whatever's already there (including
     # check-authors.py's on-demand backfill) instead of replacing it outright,
     # or a paper found today would just get evicted by tomorrow's empty scan.
-    by_id = {m["id"]: m for m in prev.get("watched_matches", [])}
-    for m in todays_watched:
-        by_id[m["id"]] = m
-    watched_matches = sorted(by_id.values(), key=lambda m: m["published"], reverse=True)
+    # merge_watched_matches also collapses the same paper found via both
+    # this scan and check-authors.py's backfill — they use different id
+    # formats for an identical paper — and lets a newer revision replace an
+    # older one instead of both showing up.
+    watched_matches = merge_watched_matches(prev.get("watched_matches", []), todays_watched)
+    watched_matches = sorted(watched_matches, key=lambda m: m["published"], reverse=True)
     watched_matches = watched_matches[:config["maxWatchedMatches"]]
 
     area_matches_all = classify(candidates, config["interestAreas"])
