@@ -23,6 +23,17 @@ BarWidget {
     return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   }
 
+  // modelData.link comes straight from arXiv's RSS/API response — an
+  // untrusted network source — and gets handed to Qt.openUrlExternally,
+  // which dispatches to the desktop's URL handler for whatever scheme is
+  // given. Without this check, a malformed or malicious feed entry could
+  // point that at something other than a plain https:// arXiv paper page
+  // (a file:// path, a custom URI scheme registered by some other app,
+  // etc). Only the expected form is allowed through.
+  function isSafeArxivLink(url) {
+    return typeof url === "string" && /^https:\/\/(www\.)?arxiv\.org\/abs\/[A-Za-z0-9._\/-]+$/.test(url)
+  }
+
   // Fixed height of the scrollable papers area in the popup — everything
   // else (title, Scan now/Settings, the settings form) stays put outside
   // it. Starting guess; tune to taste.
@@ -61,7 +72,17 @@ BarWidget {
     var dir = Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-scanner"
     var file = dir + "/last_viewed.json"
     var json = JSON.stringify({ viewed_at: root.updatedAt })
-    root.bar.run("mkdir -p " + root.shQuote(dir) + " && printf '%s' " + root.shQuote(json) + " > " + root.shQuote(file))
+    // Not a plain `> file` redirect onto a predictable path: that follows
+    // a pre-planted symlink there and truncates whatever it points at
+    // instead of writing last_viewed.json. mktemp's random name plus
+    // atomic create-and-open, then mv to replace the destination entry
+    // itself (rather than writing through it), closes that off — same
+    // pattern as install.sh/save-settings.sh's temp-file writes.
+    root.bar.run(
+      "mkdir -p " + root.shQuote(dir) +
+      " && tmp=$(mktemp " + root.shQuote(dir + "/.last_viewed.json.XXXXXX") + ")" +
+      " && printf '%s' " + root.shQuote(json) + " > \"$tmp\"" +
+      " && mv -f \"$tmp\" " + root.shQuote(file))
   }
 
   readonly property string category: config.category || "quant-ph"
@@ -298,7 +319,7 @@ BarWidget {
       MouseArea {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
-        onClicked: Qt.openUrlExternally(modelData.link)
+        onClicked: if (root.isSafeArxivLink(modelData.link)) Qt.openUrlExternally(modelData.link)
       }
     }
   }
