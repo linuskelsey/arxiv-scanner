@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Persists all user-configurable settings for the arxiv-quantum plugin and,
+# Persists all user-configurable settings for the arxiv-scanner plugin and,
 # if the poll time changed, regenerates the systemd --user timer to match.
 # Invoked from the bar widget's Settings panel via `bar.run(...)`.
 #
@@ -9,9 +9,9 @@
 
 set -euo pipefail
 
-CONFIG_DIR="$HOME/.config/omarchy-arxiv-quantum"
+CONFIG_DIR="$HOME/.config/omarchy-arxiv-scanner"
 CONFIG_FILE="$CONFIG_DIR/config.json"
-TIMER_FILE="$HOME/.config/systemd/user/omarchy-arxiv-quantum.timer"
+TIMER_FILE="$HOME/.config/systemd/user/omarchy-arxiv-scanner.timer"
 
 CATEGORY="quant-ph"
 INTERESTS=""
@@ -63,6 +63,6 @@ if [[ "$POLL_TIME" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] && [[ -f "$TIMER_FILE
   if [[ "$CURRENT" != "$POLL_TIME" ]]; then
     sed -i "s/^OnCalendar=.*/OnCalendar=*-*-* ${POLL_TIME}:00/" "$TIMER_FILE"
     systemctl --user daemon-reload
-    systemctl --user restart omarchy-arxiv-quantum.timer
+    systemctl --user restart omarchy-arxiv-scanner.timer
   fi
 fi

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Sets up scheduling and default config for the arxiv-quantum Omarchy plugin.
+# Sets up scheduling and default config for the arxiv-scanner Omarchy plugin.
 #
 # Run this AFTER cloning this repo to its expected location:
-#   git clone <this-repo-url> ~/.config/omarchy/plugins/prometheus.arxiv-quantum
-#   ~/.config/omarchy/plugins/prometheus.arxiv-quantum/install.sh
+#   git clone <this-repo-url> ~/.config/omarchy/plugins/prometheus.arxiv-scanner
+#   ~/.config/omarchy/plugins/prometheus.arxiv-scanner/install.sh
 #
 # It only touches things outside the plugin directory itself: the systemd
 # --user timer/service and the config.json the bar widget's Settings panel
@@ -11,10 +11,10 @@
 set -euo pipefail
 
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_DIR="$HOME/.config/omarchy-arxiv-quantum"
+CONFIG_DIR="$HOME/.config/omarchy-arxiv-scanner"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 
-echo "Installing arxiv-quantum plugin from $PLUGIN_DIR"
+echo "Installing arxiv-scanner plugin from $PLUGIN_DIR"
 
 missing=()
 for cmd in python3 jq claude; do
@@ -36,11 +36,11 @@ else
 fi
 
 mkdir -p "$SYSTEMD_DIR"
-cp "$PLUGIN_DIR/systemd/omarchy-arxiv-quantum.service" "$SYSTEMD_DIR/"
-cp "$PLUGIN_DIR/systemd/omarchy-arxiv-quantum.timer" "$SYSTEMD_DIR/"
+cp "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.service" "$SYSTEMD_DIR/"
+cp "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner.timer" "$SYSTEMD_DIR/"
 
 systemctl --user daemon-reload
-systemctl --user enable --now omarchy-arxiv-quantum.timer
+systemctl --user enable --now omarchy-arxiv-scanner.timer
 
 echo "Done. Timer enabled — first automatic scan runs at the next scheduled time (07:30 by default, or use 'Scan now' in the widget right away)."
 echo "If the bar icon doesn't show up yet, restart the shell: omarchy-restart-shell"

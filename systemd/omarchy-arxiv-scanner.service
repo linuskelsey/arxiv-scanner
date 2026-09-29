@@ -3,4 +3,4 @@ Description=arXiv new-submissions scan (Omarchy plugin)
 
 [Service]
 Type=oneshot
-ExecStart=%h/.config/omarchy/plugins/prometheus.arxiv-quantum/bin/poll.py
+ExecStart=%h/.config/omarchy/plugins/prometheus.arxiv-scanner/bin/poll.py

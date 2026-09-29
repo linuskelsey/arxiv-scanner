@@ -37,15 +37,15 @@ list.
 ## Install
 
 ```bash
-git clone <this-repo-url> ~/.config/omarchy/plugins/prometheus.arxiv-quantum
-~/.config/omarchy/plugins/prometheus.arxiv-quantum/install.sh
+git clone <this-repo-url> ~/.config/omarchy/plugins/prometheus.arxiv-scanner
+~/.config/omarchy/plugins/prometheus.arxiv-scanner/install.sh
 ```
 
 `install.sh` is safe to re-run. It:
 
-- Writes a default `~/.config/omarchy-arxiv-quantum/config.json` if one
+- Writes a default `~/.config/omarchy-arxiv-scanner/config.json` if one
   doesn't already exist (never overwrites an existing one)
-- Installs and enables the `omarchy-arxiv-quantum.timer` systemd user unit
+- Installs and enables the `omarchy-arxiv-scanner.timer` systemd user unit
 - Warns (but doesn't fail) if `python3`, `jq`, or `claude` are missing
 
 If the bar icon doesn't appear afterward, restart the shell:
@@ -58,7 +58,7 @@ Settings): category, interest areas, watched authors, max matches shown per
 section, and scan time all live there and take effect immediately (scan
 time) or on the next scan (everything else).
 
-For reference, `~/.config/omarchy-arxiv-quantum/config.json` looks like:
+For reference, `~/.config/omarchy-arxiv-scanner/config.json` looks like:
 
 ```json
 {
@@ -81,7 +81,7 @@ etc.
 the day's new submissions to Claude in one batched call for relevance
 ranking + summaries, separately checks every candidate's author list
 against `watchedAuthors`, and writes the combined result to
-`~/.local/state/omarchy-arxiv-quantum/state.json`, which the bar widget
+`~/.local/state/omarchy-arxiv-scanner/state.json`, which the bar widget
 (`BarWidget.qml`) reads and renders. `bin/check-authors.py` is a standalone
 on-demand lookup (from the Settings panel) for sanity-checking a watched
 author's name against arXiv. Nothing in the QML talks to the network or to

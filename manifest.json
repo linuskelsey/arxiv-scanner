@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "prometheus.arxiv-quantum",
+  "id": "prometheus.arxiv-scanner",
   "name": "arXiv Scanner",
   "version": "1.0.0",
   "author": "prometheus",

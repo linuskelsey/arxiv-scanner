@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Backend poller for the arxiv-quantum plugin.
-Invoked daily by the omarchy-arxiv-quantum systemd --user timer (and on
+Backend poller for the arxiv-scanner plugin.
+Invoked daily by the omarchy-arxiv-scanner systemd --user timer (and on
 demand from the bar widget's Refresh button).
 
 Fetches arXiv's new-submissions digest for a configurable category, asks a
@@ -9,7 +9,7 @@ headless Claude Code call to rank it against the user's interest areas (and
 to write a short summary for each pick), and separately checks every
 candidate's author list against a watched-authors list — those get a second,
 smaller Claude call just for summaries, since they skip relevance ranking
-entirely. Writes ~/.local/state/omarchy-arxiv-quantum/state.json for the QML
+entirely. Writes ~/.local/state/omarchy-arxiv-scanner/state.json for the QML
 bar widget to read, and fires a desktop notification when new matches are
 found.
 """
@@ -23,9 +23,9 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-STATE_DIR = Path.home() / ".local/state/omarchy-arxiv-quantum"
+STATE_DIR = Path.home() / ".local/state/omarchy-arxiv-scanner"
 STATE_FILE = STATE_DIR / "state.json"
-CONFIG_DIR = Path.home() / ".config/omarchy-arxiv-quantum"
+CONFIG_DIR = Path.home() / ".config/omarchy-arxiv-scanner"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 NOTIFIED_ID_CAP = 1000
 
@@ -49,7 +49,7 @@ RSS_NS = {
 
 
 def log(msg: str) -> None:
-    print(f"[arxiv-quantum] {msg}", file=sys.stderr)
+    print(f"[arxiv-scanner] {msg}", file=sys.stderr)
 
 
 def load_state() -> dict:
@@ -96,7 +96,7 @@ def load_config() -> dict:
 
 def fetch_candidates(category: str) -> list[dict]:
     feed_url = f"https://rss.arxiv.org/rss/{category}"
-    req = urllib.request.Request(feed_url, headers={"User-Agent": "omarchy-arxiv-quantum/1.0"})
+    req = urllib.request.Request(feed_url, headers={"User-Agent": "omarchy-arxiv-scanner/1.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         raw = resp.read()
     root = ET.fromstring(raw)
