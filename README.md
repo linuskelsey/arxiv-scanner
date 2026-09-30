@@ -10,7 +10,10 @@ list.
 
 ## Features
 
-- Daily scan via a systemd `--user` timer (default 07:30, configurable)
+- Daily scan via a systemd `--user` timer (default 07:30, configurable), plus
+  a second timer that checks shortly after every login/boot for a scan
+  that's over 24h stale (e.g. the laptop was off at 07:30) and catches up
+  if so — a no-op otherwise, so it's safe to fire on every normal login
 - Claude-ranked relevance against a list of interest areas you define
 - A separate "watched authors" list — their new papers always show up,
   independent of the relevance ranking
@@ -161,6 +164,17 @@ on-demand lookup (from the Settings panel) for sanity-checking a watched
 author's name against arXiv. Nothing in the QML talks to the network or to
 Claude directly — it only reads state files and shells out via `bar.run(...)`
 for actions (scan now, check authors, save settings).
+
+Two systemd `--user` timers drive `poll.py`, both installed by `install.sh`:
+the main `omarchy-arxiv-scanner.timer` (daily, at the configured scan time)
+and `omarchy-arxiv-scanner-catchup.timer` (`OnStartupSec`, ~2 minutes after
+every login/boot). The daily timer's own `Persistent=true` should already
+re-run a missed 07:30 scan once your session starts again, but that relies
+on session-lingering and systemd's own stamp-file bookkeeping working as
+expected — the catch-up timer makes the same outcome deterministic instead:
+it always fires shortly after login, and `poll.py --if-stale` (not the
+timer) decides whether that's a real catch-up scan or a no-op, based on
+`state.json`'s own `updated_at` (stale = missing or over 24h old).
 
 ## License
 

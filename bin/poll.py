@@ -703,10 +703,40 @@ def notify(new_matches: list[dict]) -> None:
         log(f"notification failed: {e}")
 
 
-def main() -> None:
+STALE_SCAN_HOURS = 24
+
+
+def is_scan_stale(state: dict, max_hours: int = STALE_SCAN_HOURS) -> bool:
+    """
+    True if state.json has no updated_at (never scanned) or it's older
+    than max_hours. Used only by the startup catch-up path (--if-stale) —
+    a laptop that's off through a scheduled OnCalendar run relies on the
+    daily timer's own Persistent=true to fire that run as soon as the
+    user's systemd instance is active again, which should cover this, but
+    is one more moving part (session lingering, stamp-file bookkeeping)
+    than a plugin author can fully vouch for sight unseen. This makes the
+    same outcome (an overdue scan actually happens) independently
+    checkable and debuggable from poll.py's own logs, regardless of
+    whether systemd's own catch-up fired.
+    """
+    raw = state.get("updated_at")
+    if not raw:
+        return True
+    try:
+        last = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return True
+    return datetime.now(timezone.utc) - last > timedelta(hours=max_hours)
+
+
+def main(only_if_stale: bool = False) -> None:
     prev = load_state()
     notified_ids = prev.get("_notified_ids", [])
     config = load_config()
+
+    if only_if_stale and not is_scan_stale(prev):
+        log(f"last scan was under {STALE_SCAN_HOURS}h ago — skipping startup catch-up scan")
+        return
 
     try:
         candidates = fetch_candidates(config["category"])
@@ -768,4 +798,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(only_if_stale="--if-stale" in sys.argv[1:])
