@@ -394,6 +394,15 @@ def canonical_arxiv_id(raw_id: str) -> tuple[str, int]:
     return m.group(1), int(m.group(2) or 0)
 
 
+def _parse_published(raw: str):
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
 def merge_watched_matches(existing: list[dict], new: list[dict]) -> list[dict]:
     """
     Combines watched-author entries from two batches (e.g. state.json's
@@ -401,16 +410,46 @@ def merge_watched_matches(existing: list[dict], new: list[dict]) -> list[dict]:
     scan or check-authors.py's backfill), collapsing anything that's the
     same underlying arXiv paper — regardless of which id format or which
     revision it was found under — into one entry: whichever carries the
-    highest version number. A v2 replaces a previously-stored v1 outright
-    rather than sitting alongside it.
+    highest version number wins the displayed *content* (title/summary/
+    link), so a genuine v2 replaces v1's text outright rather than sitting
+    alongside it.
+
+    Its displayed `published` timestamp is handled separately, pinned to
+    the EARLIEST one ever observed for that paper across every batch seen,
+    regardless of version or source — arXiv's own "new" listing can carry
+    a paper — the exact same v1, no revision involved — as announce_type
+    "new" again on a later day than it actually first appeared (moderation
+    queue delays are real and documented; see fetch_candidates' docstring
+    for specifics), and poll.py's RSS-sourced date is date-only/day-
+    granularity besides. Without pinning, a re-fetch would silently bump
+    the paper's displayed date forward each time, making an old paper look
+    like it just showed up. Confirmed against a real case: the same v1
+    paper's own arXiv API record shows published == updated with no v2
+    ever existing, while our RSS-sourced copy of it had crept forward a
+    full day between two consecutive scans.
     """
     by_base: dict[str, dict] = {}
+    earliest_dt: dict[str, datetime] = {}
+    earliest_raw: dict[str, str] = {}
+
     for m in existing + new:
         base, version = canonical_arxiv_id(m["id"])
+        dt = _parse_published(m.get("published", ""))
+        if dt is not None and (base not in earliest_dt or dt < earliest_dt[base]):
+            earliest_dt[base] = dt
+            earliest_raw[base] = m["published"]
+
         current = by_base.get(base)
         if current is None or version >= canonical_arxiv_id(current["id"])[1]:
             by_base[base] = m
-    return list(by_base.values())
+
+    result = []
+    for base, m in by_base.items():
+        if base in earliest_raw and m.get("published") != earliest_raw[base]:
+            m = dict(m)
+            m["published"] = earliest_raw[base]
+        result.append(m)
+    return result
 
 
 def cap_per_author(matches: list[dict], max_per_author: int | None) -> list[dict]:
