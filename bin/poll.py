@@ -5,18 +5,19 @@ Invoked daily by the omarchy-arxiv-scanner systemd --user timer (and on
 demand from the bar widget's Refresh button).
 
 Fetches arXiv's new-submissions digest for a configurable category, asks a
-headless Claude Code call to rank it against the user's interest areas (and
-to write a short summary for each pick), and separately checks every
-candidate's author list against a watched-authors list — those get a second,
-smaller Claude call just for summaries, since they skip relevance ranking
-entirely. Writes ~/.local/state/omarchy-arxiv-scanner/state.json for the QML
-bar widget to read, and fires a desktop notification when new matches are
-found.
+headless AI CLI call (Claude Code or Codex — see run_agent/pick_agent_backend)
+to rank it against the user's interest areas (and to write a short summary
+for each pick), and separately checks every candidate's author list against
+a watched-authors list — those get a second, smaller call just for
+summaries, since they skip relevance ranking entirely. Writes
+~/.local/state/omarchy-arxiv-scanner/state.json for the QML bar widget to
+read, and fires a desktop notification when new matches are found.
 """
 import json
 import os
 import re
 import selectors
+import shutil
 import signal
 import subprocess
 import sys
@@ -56,9 +57,17 @@ NOTIFIED_ID_CAP = 1000
 # unbounded read into memory.
 MAX_FEED_BYTES = 5_000_000
 # A batch of paper summaries should be a few KB of JSON. Truncate before any
-# parsing or storage so a runaway Claude process can't get unbounded output
+# parsing or storage so a runaway agent process can't get unbounded output
 # written into the persistent state file.
-MAX_CLAUDE_OUTPUT_CHARS = 200_000
+MAX_AGENT_OUTPUT_CHARS = 200_000
+# Written by the (separate, optional) omarchy.agents bar widget's own usage
+# collectors — one file per AI coding CLI it finds installed and signed in,
+# "ready": true/false. Used only to pick a default backend when the user
+# hasn't set one explicitly; absence (that widget isn't installed) just
+# means auto-detection finds nothing and falls back to "claude".
+OMARCHY_AGENTS_USAGE_DIR = Path.home() / ".local/state/omarchy/agents/usage"
+# Order here is the auto-detect preference when more than one is ready.
+KNOWN_AGENT_BACKENDS = ("claude", "codex")
 
 DEFAULT_CONFIG = {
     "category": "quant-ph",
@@ -77,6 +86,14 @@ DEFAULT_CONFIG = {
     # maxWatchedMatches ceiling applies.
     "maxWatchedPerAuthor": None,
     "watchedAuthors": [],
+    # "auto" picks the first of KNOWN_AGENT_BACKENDS the omarchy.agents
+    # widget reports as ready (see detect_ready_agent_backends), falling
+    # back to "claude" if that widget isn't installed or finds nothing —
+    # matches this plugin's behavior from before other backends existed.
+    "aiBackend": "auto",
+    # Blank = codex's own built-in default model. Only consulted when
+    # aiBackend resolves to "codex".
+    "codexModel": "",
 }
 
 RSS_NS = {
@@ -89,13 +106,14 @@ def log(msg: str) -> None:
     print(f"[arxiv-scanner] {msg}", file=sys.stderr)
 
 
-class ClaudeOutputTooLarge(subprocess.SubprocessError):
+class AgentOutputTooLarge(subprocess.SubprocessError):
     pass
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
-    # proc.kill() only signals the direct child. claude (or the shell/tool
-    # wrapper a `claude` shim might be) can have children of its own, which
+    # proc.kill() only signals the direct child. claude/codex (or a shell/
+    # tool wrapper either one might be a shim for) can have children of its
+    # own, which
     # would otherwise be orphaned and keep running past the timeout/cap that
     # was supposed to stop them. start_new_session=True below puts the whole
     # tree in its own process group so this reaches all of it.
@@ -109,13 +127,13 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
         pass
 
 
-def run_claude(prompt: str, timeout: float, max_bytes: int = MAX_CLAUDE_OUTPUT_CHARS) -> subprocess.CompletedProcess:
+def _run_agent_subprocess(argv: list[str], prompt: str, timeout: float, max_bytes: int) -> subprocess.CompletedProcess:
     """
-    subprocess.run(["claude", ...], capture_output=True) but:
+    subprocess.run(argv, capture_output=True) but:
 
     - the max_bytes cap is enforced while reading the child's stdout/stderr
       pipes, not by truncating a string after the full output has already
-      been buffered in memory — a misbehaving or compromised claude process
+      been buffered in memory — a misbehaving or compromised agent process
       gets killed the moment it crosses the cap rather than being allowed
       to keep writing.
     - stdin is written and stdout/stderr are drained concurrently in one
@@ -129,42 +147,19 @@ def run_claude(prompt: str, timeout: float, max_bytes: int = MAX_CLAUDE_OUTPUT_C
       child blocks on a full stdout pipe, forever — and since the deadline
       was never started, the timeout never fires either.
 
-    Raises ClaudeOutputTooLarge (a subprocess.SubprocessError, so existing
+    Raises AgentOutputTooLarge (a subprocess.SubprocessError, so existing
     `except subprocess.SubprocessError` call sites catch it without change)
     if either stream exceeds max_bytes, and subprocess.TimeoutExpired if
     the whole exchange doesn't finish within timeout seconds.
 
-    The prompt embeds untrusted third-party text (paper titles/abstracts
-    from arXiv) and this runs unattended off a systemd timer — an
-    adversarial abstract could try to talk Claude into invoking a tool or
-    an MCP server, subject to whatever the user has locally configured
-    (permissive Bash rules, a connected MCP service, etc). --tools ""
-    removes every built-in tool regardless of that config, so there's
-    nothing to invoke even if the injection attempt would otherwise have
-    "worked"; --disallowedTools is needed separately since --tools doesn't
-    reach MCP tools. Verified empirically (--output-format stream-json,
-    inspecting the system/init event) rather than assumed from the docs
-    alone: with both flags, `tools` comes back [] even though a few
-    claude.ai-connector MCP servers still show as "connected" in that same
-    event — connection status there doesn't imply any of their tools are
-    actually exposed, and none are.
-
-    --setting-sources "" additionally drops most locally-installed skills
-    from that same session (confirmed by diffing system/init's `skills`
-    list with and without it) — but not `memory_paths` (CLAUDE.md/auto
-    memory), which stays populated either way. --bare is the one flag
-    that's documented to skip CLAUDE.md/memory too, and would be the more
-    complete fix, but it also stops reading the OAuth/subscription session
-    this plugin otherwise relies on (needs ANTHROPIC_API_KEY instead),
-    which would break it for most users — not used here for that reason.
-    The residual exposure this leaves is CLAUDE.md content shaping output
-    *style*, not any tool/MCP invocation capability, which is fully closed
-    above regardless.
+    Shared by every backend (run_claude, run_codex, ...) — argv is the only
+    thing that differs between them. Each backend wrapper is responsible
+    for its own lockdown flags against prompt injection; this function just
+    owns the subprocess-safety mechanics, not the security policy.
     """
     deadline = time.monotonic() + timeout  # starts now, before any I/O
     proc = subprocess.Popen(
-        ["claude", "-p", "--output-format", "text",
-         "--tools", "", "--disallowedTools", "mcp__*", "--setting-sources", ""],
+        argv,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         start_new_session=True,
     )
@@ -221,7 +216,7 @@ def run_claude(prompt: str, timeout: float, max_bytes: int = MAX_CLAUDE_OUTPUT_C
                 chunks[name].extend(chunk)
                 if len(chunks[name]) > max_bytes:
                     _kill_process_group(proc)
-                    raise ClaudeOutputTooLarge(f"claude {name} exceeded {max_bytes} bytes")
+                    raise AgentOutputTooLarge(f"{argv[0]} {name} exceeded {max_bytes} bytes")
 
         returncode = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
         return subprocess.CompletedProcess(
@@ -232,6 +227,134 @@ def run_claude(prompt: str, timeout: float, max_bytes: int = MAX_CLAUDE_OUTPUT_C
     finally:
         if proc.poll() is None:
             _kill_process_group(proc)
+
+
+def run_claude(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CHARS) -> subprocess.CompletedProcess:
+    """
+    The prompt embeds untrusted third-party text (paper titles/abstracts
+    from arXiv) and this runs unattended off a systemd timer — an
+    adversarial abstract could try to talk Claude into invoking a tool or
+    an MCP server, subject to whatever the user has locally configured
+    (permissive Bash rules, a connected MCP service, etc). --tools ""
+    removes every built-in tool regardless of that config, so there's
+    nothing to invoke even if the injection attempt would otherwise have
+    "worked"; --disallowedTools is needed separately since --tools doesn't
+    reach MCP tools. Verified empirically (--output-format stream-json,
+    inspecting the system/init event) rather than assumed from the docs
+    alone: with both flags, `tools` comes back [] even though a few
+    claude.ai-connector MCP servers still show as "connected" in that same
+    event — connection status there doesn't imply any of their tools are
+    actually exposed, and none are.
+
+    --setting-sources "" additionally drops most locally-installed skills
+    from that same session (confirmed by diffing system/init's `skills`
+    list with and without it) — but not `memory_paths` (CLAUDE.md/auto
+    memory), which stays populated either way. --bare is the one flag
+    that's documented to skip CLAUDE.md/memory too, and would be the more
+    complete fix, but it also stops reading the OAuth/subscription session
+    this plugin otherwise relies on (needs ANTHROPIC_API_KEY instead),
+    which would break it for most users — not used here for that reason.
+    The residual exposure this leaves is CLAUDE.md content shaping output
+    *style*, not any tool/MCP invocation capability, which is fully closed
+    above regardless.
+    """
+    argv = ["claude", "-p", "--output-format", "text",
+            "--tools", "", "--disallowedTools", "mcp__*", "--setting-sources", ""]
+    return _run_agent_subprocess(argv, prompt, timeout, max_bytes)
+
+
+def run_codex(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CHARS,
+              model: str | None = None) -> subprocess.CompletedProcess:
+    """
+    Same untrusted-content risk as run_claude, but codex has no equivalent
+    of claude's --tools "" — there's no flag that empties the tool list
+    outright. Its lockdown here is OS-enforced sandboxing of whatever shell
+    command the model attempts, instead of removing the tool itself:
+
+    --sandbox read-only blocks any filesystem write or network access a
+    model-issued shell command might try, independent of this user's own
+    ~/.codex/config.toml. --ignore-user-config drops that config from this
+    invocation entirely — profiles, any configured MCP servers, shell
+    environment policy overrides — the same role --setting-sources ""
+    plays for claude above; per `codex exec --help`, auth still works via
+    CODEX_HOME regardless, so login isn't affected by ignoring the rest of
+    the config.
+
+    -c approval_policy="never" forces every tool-use attempt to be
+    auto-denied rather than blocking on an interactive approval prompt —
+    this is an unattended systemd timer, nothing is there to answer one.
+    Pinned explicitly rather than relied on: local testing showed an
+    unprompted "approval: never" in codex's own banner, which turned out
+    to be this user's own config.toml default, not a universal one.
+
+    --cd points at a freshly made, empty scratch directory (not the
+    plugin's own config/state dirs) so there's nothing of interest for an
+    allowed read-only shell command to find; --ephemeral skips persisting
+    a session transcript of the (untrusted) abstract text to ~/.codex;
+    --skip-git-repo-check avoids a hard failure since that scratch dir is
+    never a git repo.
+
+    Caller passes model=None to use codex's own built-in default rather
+    than requiring every user to configure one just for this to work.
+    """
+    scratch_dir = tempfile.mkdtemp(prefix="arxiv-scanner-codex-")
+    try:
+        argv = [
+            "codex", "exec",
+            "--sandbox", "read-only",
+            "-c", 'approval_policy="never"',
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--ephemeral",
+            "--color", "never",
+            "--cd", scratch_dir,
+        ]
+        if model:
+            argv += ["-m", model]
+        argv.append("-")  # read the prompt from stdin, never from argv
+        return _run_agent_subprocess(argv, prompt, timeout, max_bytes)
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+AGENT_BACKENDS = {"claude": run_claude, "codex": run_codex}
+
+
+def detect_ready_agent_backends() -> list[str]:
+    """
+    Reads the (separate, optional) omarchy.agents bar widget's own usage
+    records — one JSON file per AI coding CLI it found installed and
+    signed in, named by id, e.g. ~/.local/state/omarchy/agents/usage/
+    codex.json with "ready": true/false. That widget isn't a dependency of
+    this plugin: if it's not installed, this directory just doesn't exist
+    and every backend is treated as not-ready, which is fine — "aiBackend"
+    falls back to "claude" either way, same as before this existed.
+    """
+    ready = []
+    for backend_id in KNOWN_AGENT_BACKENDS:
+        try:
+            data = json.loads((OMARCHY_AGENTS_USAGE_DIR / f"{backend_id}.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("ready"):
+            ready.append(backend_id)
+    return ready
+
+
+def pick_agent_backend(config: dict) -> str:
+    configured = config.get("aiBackend", "auto")
+    if configured in AGENT_BACKENDS:
+        return configured
+    ready = detect_ready_agent_backends()
+    return ready[0] if ready else "claude"
+
+
+def run_agent(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CHARS) -> subprocess.CompletedProcess:
+    config = load_config()
+    backend = pick_agent_backend(config)
+    if backend == "codex":
+        return run_codex(prompt, timeout, max_bytes, model=config.get("codexModel") or None)
+    return run_claude(prompt, timeout, max_bytes)
 
 
 def load_state() -> dict:
@@ -370,6 +493,10 @@ def load_config() -> dict:
             pass
     if isinstance(data.get("watchedAuthors"), list):
         config["watchedAuthors"] = [a.strip() for a in data["watchedAuthors"] if isinstance(a, str) and a.strip()]
+    if data.get("aiBackend") in ("auto", *AGENT_BACKENDS):
+        config["aiBackend"] = data["aiBackend"]
+    if isinstance(data.get("codexModel"), str):
+        config["codexModel"] = data["codexModel"].strip()
     return config
 
 
@@ -636,7 +763,7 @@ def summarize_papers(papers: list[dict]) -> dict[str, str]:
         return {}
     summaries: dict[str, str] = {}
     try:
-        result = run_claude(build_summary_prompt(papers), timeout=120)
+        result = run_agent(build_summary_prompt(papers), timeout=120)
         if result.returncode == 0:
             match = re.search(r"\[.*\]", result.stdout.strip(), re.DOTALL)
             if match:
@@ -644,7 +771,7 @@ def summarize_papers(papers: list[dict]) -> dict[str, str]:
                     if isinstance(item, dict) and item.get("id"):
                         summaries[item["id"]] = item.get("summary", "")
         else:
-            log(f"summarize: claude exited {result.returncode}: {result.stderr[:300]}")
+            log(f"summarize: agent exited {result.returncode}: {result.stderr[:300]}")
     except (subprocess.SubprocessError, OSError, json.JSONDecodeError) as e:
         log(f"summarize failed: {e}")
 
@@ -680,13 +807,13 @@ def classify(candidates: list[dict], interest_areas: list[str]) -> list[dict]:
         return []
     prompt = build_prompt(candidates, interest_areas)
     try:
-        result = run_claude(prompt, timeout=180)
+        result = run_agent(prompt, timeout=180)
     except (subprocess.SubprocessError, OSError) as e:
-        log(f"claude invocation failed: {e}")
+        log(f"agent invocation failed: {e}")
         return []
 
     if result.returncode != 0:
-        log(f"claude exited {result.returncode}: {result.stderr[:400]}")
+        log(f"agent exited {result.returncode}: {result.stderr[:400]}")
         return []
 
     text = result.stdout.strip()

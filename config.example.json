@@ -7,5 +7,7 @@
   "watchedAuthors": [],
   "maxAreaMatches": 3,
   "maxWatchedMatches": 3,
-  "pollTime": "07:30"
+  "pollTime": "07:30",
+  "aiBackend": "auto",
+  "codexModel": ""
 }
