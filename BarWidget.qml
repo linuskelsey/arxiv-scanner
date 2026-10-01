@@ -60,6 +60,7 @@ BarWidget {
   readonly property var watchedMatches: state.watched_matches || []
   readonly property int totalMatches: areaMatches.length + watchedMatches.length
   readonly property string updatedAt: state.updated_at || ""
+  readonly property string agentLabel: state.agent_label || ""
   // "!" badge: true whenever the latest scan hasn't been opened yet — e.g.
   // the timer fired overnight or the user just logged in and hasn't
   // clicked the bar icon since. Compares timestamps rather than ids so it
@@ -353,13 +354,35 @@ BarWidget {
       width: parent.width
       spacing: Style.space(10)
 
-      Text {
-        textFormat: Text.PlainText
-        text: "arXiv " + root.category + " scan"
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.subtitle
-        font.bold: true
+      Item {
+        width: parent.width
+        implicitHeight: titleText.implicitHeight
+
+        Text {
+          id: titleText
+          textFormat: Text.PlainText
+          anchors.left: parent.left
+          anchors.right: modelText.left
+          anchors.rightMargin: Style.space(8)
+          text: "arXiv " + root.category + " scan"
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+          elide: Text.ElideRight
+        }
+
+        Text {
+          id: modelText
+          textFormat: Text.PlainText
+          visible: root.agentLabel !== ""
+          anchors.right: parent.right
+          anchors.baseline: titleText.baseline
+          text: "model: " + root.agentLabel
+          color: Qt.darker(root.bar.foreground, 1.4)
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+        }
       }
 
       Text {

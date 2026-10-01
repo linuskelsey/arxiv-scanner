@@ -357,6 +357,17 @@ def run_agent(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CHA
     return run_claude(prompt, timeout, max_bytes)
 
 
+def describe_agent_backend(config: dict) -> str:
+    """One line for the bar widget's header, e.g. "Claude Code" or "Codex
+    (gpt-5-codex)" — whatever run_agent() would actually pick/use for this
+    config right now."""
+    backend = pick_agent_backend(config)
+    if backend == "codex":
+        model = config.get("codexModel") or ""
+        return f"Codex ({model})" if model else "Codex (default model)"
+    return "Claude Code"
+
+
 def load_state() -> dict:
     if STATE_FILE.exists():
         try:
@@ -959,6 +970,7 @@ def main(only_if_stale: bool = False) -> None:
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "area_matches": area_matches,
         "watched_matches": watched_matches,
+        "agent_label": describe_agent_backend(config),
         "_notified_ids": notified_ids,
     })
 
