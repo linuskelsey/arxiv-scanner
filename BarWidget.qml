@@ -60,6 +60,7 @@ BarWidget {
   readonly property var watchedMatches: state.watched_matches || []
   readonly property int totalMatches: areaMatches.length + watchedMatches.length
   readonly property string updatedAt: state.updated_at || ""
+  readonly property string agentLabel: state.agent_label || ""
   // "!" badge: true whenever the latest scan hasn't been opened yet — e.g.
   // the timer fired overnight or the user just logged in and hasn't
   // clicked the bar icon since. Compares timestamps rather than ids so it
@@ -96,6 +97,8 @@ BarWidget {
   // slots, rather than guaranteeing each watched author some visibility.
   readonly property var maxWatchedPerAuthor: (config.maxWatchedPerAuthor !== undefined && config.maxWatchedPerAuthor !== null) ? config.maxWatchedPerAuthor : null
   readonly property string pollTime: config.pollTime || "07:00"
+  readonly property string aiBackend: config.aiBackend || "auto"
+  readonly property string codexModel: config.codexModel || ""
 
   // KeyboardPanel's own close() (outside click, Escape, popout-switch to
   // another bar icon) falls back to setting its `open` property directly
@@ -351,13 +354,35 @@ BarWidget {
       width: parent.width
       spacing: Style.space(10)
 
-      Text {
-        textFormat: Text.PlainText
-        text: "arXiv " + root.category + " scan"
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.subtitle
-        font.bold: true
+      Item {
+        width: parent.width
+        implicitHeight: titleText.implicitHeight
+
+        Text {
+          id: titleText
+          textFormat: Text.PlainText
+          anchors.left: parent.left
+          anchors.right: modelText.left
+          anchors.rightMargin: Style.space(8)
+          text: "arXiv " + root.category + " scan"
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+          elide: Text.ElideRight
+        }
+
+        Text {
+          id: modelText
+          textFormat: Text.PlainText
+          visible: root.agentLabel !== ""
+          anchors.right: parent.right
+          anchors.baseline: titleText.baseline
+          text: "model: " + root.agentLabel
+          color: Qt.darker(root.bar.foreground, 1.4)
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+        }
       }
 
       Text {
@@ -554,6 +579,8 @@ BarWidget {
                   maxWatchedField.text = String(root.maxWatchedMatches)
                   maxWatchedPerAuthorField.text = root.maxWatchedPerAuthor !== null ? String(root.maxWatchedPerAuthor) : ""
                   pollTimeField.text = root.pollTime
+                  aiBackendDropdown.value = root.aiBackend
+                  codexModelField.text = root.codexModel
                   root.saveStatus = ""
                 }
               }
@@ -746,6 +773,45 @@ BarWidget {
           }
 
           Row {
+            width: parent.width
+            spacing: Style.space(12)
+
+            Column {
+              width: (parent.width - Style.space(12)) / 2
+              spacing: Style.space(4)
+              Dropdown {
+                id: aiBackendDropdown
+                width: parent.width
+                label: "AI backend"
+                foreground: root.bar.foreground
+                options: [
+                  { value: "auto", label: "Auto (first signed-in agent found)" },
+                  { value: "claude", label: "Claude Code" },
+                  { value: "codex", label: "Codex" }
+                ]
+              }
+            }
+
+            Column {
+              width: (parent.width - Style.space(12)) / 2
+              spacing: Style.space(4)
+              Text {
+                textFormat: Text.PlainText
+                text: "Codex model (blank = codex's default)"
+                color: Qt.darker(root.bar.foreground, 1.3)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.Wrap
+              }
+              TextField {
+                id: codexModelField
+                width: parent.width
+                placeholderText: "e.g. openai/gpt-5-codex"
+              }
+            }
+          }
+
+          Row {
             spacing: Style.space(8)
 
             Button {
@@ -761,6 +827,8 @@ BarWidget {
                     + " --max-watched " + root.shQuote(maxWatchedField.text || "3")
                     + " --max-watched-per-author " + root.shQuote(maxWatchedPerAuthorField.text)
                     + " --poll-time " + root.shQuote(pollTimeField.text || "07:00")
+                    + " --ai-backend " + root.shQuote(aiBackendDropdown.value || "auto")
+                    + " --codex-model " + root.shQuote(codexModelField.text)
                   root.bar.run(cmd)
                 }
                 root.saveStatus = "Saved — applies on the next scan (scan time takes effect immediately)."

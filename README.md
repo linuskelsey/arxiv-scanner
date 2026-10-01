@@ -30,12 +30,14 @@ list.
 - [Omarchy](https://omarchy.org) with its Quickshell-based bar
 - `python3`
 - `jq` (used by the settings-save script)
-- [`claude`](https://claude.com/claude-code) on `PATH` and logged in — used
-  headlessly (`claude -p`) for both relevance ranking and summarizing.
-  **Relevance filtering has no fallback**: without `claude`, the "Recent
-  papers of interest" column stays empty every scan. The separate watched
-  authors list still works either way — its summaries just fall back to a
-  naive first-sentence trim of the abstract instead of a Claude-written one
+- One supported AI CLI, on `PATH` and logged in: [`claude`](https://claude.com/claude-code)
+  or [`codex`](https://github.com/openai/codex). Used headlessly for both
+  relevance ranking and summarizing — see "AI backend" below for how the
+  choice between them is made. **Relevance filtering has no fallback**:
+  without one of these, the "Recent papers of interest" column stays empty
+  every scan. The separate watched authors list still works either way —
+  its summaries just fall back to a naive first-sentence trim of the
+  abstract instead of an AI-written one
 - `omarchy` CLI for desktop notifications (present by default on Omarchy;
   notifications just no-op without it)
 
@@ -144,7 +146,9 @@ For reference, `~/.config/omarchy-arxiv-scanner/config.json` looks like:
   "watchedAuthors": ["Jane Doe"],
   "maxAreaMatches": 3,
   "maxWatchedMatches": 3,
-  "pollTime": "07:30"
+  "pollTime": "07:30",
+  "aiBackend": "auto",
+  "codexModel": ""
 }
 ```
 
@@ -152,18 +156,53 @@ For reference, `~/.config/omarchy-arxiv-scanner/config.json` looks like:
 (`https://arxiv.org/list/<category>/new`) — `quant-ph`, `cs.CR`, `cs.LG`,
 etc.
 
+### AI backend
+
+`aiBackend` picks which CLI does the relevance ranking and summarizing:
+
+- `"auto"` (default) — picks the first of `claude`/`codex` that the
+  [Agents bar widget](https://plugins.omarchy.org) (`omarchy.agents`, a
+  separate, optional plugin) reports as installed and signed in, by reading
+  its own usage records at `~/.local/state/omarchy/agents/usage/<id>.json`.
+  Falls back to `"claude"` if that widget isn't installed or finds nothing
+  — matches this plugin's behavior from before other backends existed.
+- `"claude"` / `"codex"` — pins to that backend regardless of what's
+  detected; if it isn't actually installed/authenticated the scan just
+  fails the same way an unauthenticated `claude` always has (relevance
+  filtering empty, watched authors fall back to naive summaries).
+
+`codexModel` (only used when the resolved backend is `codex`) is passed as
+`codex exec -m <model>`; leave it blank to use codex's own built-in
+default.
+
+Both backends run the same untrusted-content exposure: every prompt
+embeds today's arXiv titles/abstracts verbatim, off an unattended systemd
+timer, so an adversarial abstract trying to talk the model into invoking a
+tool is a real (if speculative) threat model either way. `claude` closes it
+by removing every tool from the session outright (`--tools ""` plus
+`--disallowedTools mcp__*`, verified empirically against claude's own
+`system/init` event). `codex` has no equivalent "no tools" flag, so it's
+closed differently: `--sandbox read-only` makes any model-issued shell
+command's filesystem/network access OS-enforced-denied regardless of this
+user's own `~/.codex/config.toml`, `--ignore-user-config` drops that
+config (profiles, MCP servers) from the invocation entirely while auth
+still works via `CODEX_HOME`, and `-c approval_policy="never"` ensures a
+denied attempt doesn't instead hang waiting on an interactive approval
+prompt that nothing is there to answer. See `run_codex()`'s docstring in
+`bin/poll.py` for the full reasoning.
+
 ## How it works
 
 `bin/poll.py` fetches arXiv's RSS feed for the configured category, sends
-the day's new submissions to Claude in one batched call for relevance
-ranking + summaries, separately checks every candidate's author list
-against `watchedAuthors`, and writes the combined result to
+the day's new submissions to the configured AI backend in one batched call
+for relevance ranking + summaries, separately checks every candidate's
+author list against `watchedAuthors`, and writes the combined result to
 `~/.local/state/omarchy-arxiv-scanner/state.json`, which the bar widget
 (`BarWidget.qml`) reads and renders. `bin/check-authors.py` is a standalone
 on-demand lookup (from the Settings panel) for sanity-checking a watched
 author's name against arXiv. Nothing in the QML talks to the network or to
-Claude directly — it only reads state files and shells out via `bar.run(...)`
-for actions (scan now, check authors, save settings).
+an AI backend directly — it only reads state files and shells out via
+`bar.run(...)` for actions (scan now, check authors, save settings).
 
 Two systemd `--user` timers drive `poll.py`, both installed by `install.sh`:
 the main `omarchy-arxiv-scanner.timer` (daily, at the configured scan time)
