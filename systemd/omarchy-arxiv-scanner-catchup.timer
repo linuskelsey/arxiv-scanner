@@ -1,0 +1,22 @@
+[Unit]
+Description=Check for a stale arXiv scan shortly after login/boot
+# Managed-By: prometheus.arxiv-scanner — install.sh/uninstall.sh check for
+# this line before overwriting or removing this unit, so a same-named unit
+# from something else is never touched. Do not remove this line by hand.
+#
+# Separate from the main daily timer on purpose: OnCalendar's own
+# Persistent=true *should* already catch up a missed 07:30 run (e.g. the
+# laptop was off) once the user's systemd instance starts again, but that
+# depends on session-lingering and stamp-file bookkeeping working as
+# expected, which isn't something a plugin can fully vouch for sight
+# unseen. This unit is deterministic instead: it always runs shortly after
+# every login/boot, and poll.py's own --if-stale flag (not this unit)
+# decides whether that's actually a no-op or a real catch-up scan, so it's
+# safe to fire on every normal login too, not just after a missed one.
+
+[Timer]
+OnStartupSec=2min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

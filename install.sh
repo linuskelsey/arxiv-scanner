@@ -78,6 +78,25 @@ else
   echo "Warning: $TIMER_DEST already exists and wasn't installed by this plugin — leaving it alone and not enabling it." >&2
 fi
 
+# Separate catch-up unit: neither file has any user-editable state (unlike
+# the main .timer's OnCalendar line), so both are always safe to refresh —
+# still gated on provenance, same as the .service above, in case something
+# else is squatting on the name.
+CATCHUP_SERVICE_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner-catchup.service"
+CATCHUP_TIMER_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner-catchup.timer"
+
+if [[ ! -e "$CATCHUP_SERVICE_DEST" && ! -L "$CATCHUP_SERVICE_DEST" ]] || is_ours "$CATCHUP_SERVICE_DEST"; then
+  install_file_safe "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner-catchup.service" "$CATCHUP_SERVICE_DEST"
+else
+  echo "Warning: $CATCHUP_SERVICE_DEST already exists and wasn't installed by this plugin — leaving it alone." >&2
+fi
+
+if [[ ! -e "$CATCHUP_TIMER_DEST" && ! -L "$CATCHUP_TIMER_DEST" ]] || is_ours "$CATCHUP_TIMER_DEST"; then
+  install_file_safe "$PLUGIN_DIR/systemd/omarchy-arxiv-scanner-catchup.timer" "$CATCHUP_TIMER_DEST"
+else
+  echo "Warning: $CATCHUP_TIMER_DEST already exists and wasn't installed by this plugin — leaving it alone." >&2
+fi
+
 systemctl --user daemon-reload
 
 if is_ours "$SERVICE_DEST" && is_ours "$TIMER_DEST"; then
@@ -85,6 +104,13 @@ if is_ours "$SERVICE_DEST" && is_ours "$TIMER_DEST"; then
   echo "Done. Timer enabled — first automatic scan runs at the next scheduled time (07:30 by default, or use 'Scan now' in the widget right away)."
 else
   echo "Skipped enabling the timer — resolve the unit-name conflict above, then re-run install.sh." >&2
+fi
+
+if is_ours "$CATCHUP_SERVICE_DEST" && is_ours "$CATCHUP_TIMER_DEST"; then
+  systemctl --user enable --now omarchy-arxiv-scanner-catchup.timer
+  echo "Catch-up timer enabled — checks for a stale (>24h old) scan shortly after each login/boot, no-ops otherwise."
+else
+  echo "Skipped enabling the catch-up timer — resolve the unit-name conflict above, then re-run install.sh." >&2
 fi
 
 echo "If the bar icon doesn't show up yet, restart the shell: omarchy-restart-shell"

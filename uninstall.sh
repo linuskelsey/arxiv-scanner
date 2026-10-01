@@ -7,6 +7,8 @@ set -euo pipefail
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 SERVICE_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner.service"
 TIMER_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner.timer"
+CATCHUP_SERVICE_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner-catchup.service"
+CATCHUP_TIMER_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner-catchup.timer"
 
 # Same-named units at these paths might not be ours — don't disable, stop,
 # or delete anything install.sh didn't actually put there. Both shipped
@@ -25,6 +27,19 @@ if is_ours "$SERVICE_DEST"; then
   rm -f "$SERVICE_DEST"
 else
   echo "No service at $SERVICE_DEST installed by this plugin — nothing to remove there." >&2
+fi
+
+if is_ours "$CATCHUP_TIMER_DEST"; then
+  systemctl --user disable --now omarchy-arxiv-scanner-catchup.timer 2>/dev/null || true
+  rm -f "$CATCHUP_TIMER_DEST"
+else
+  echo "No catch-up timer at $CATCHUP_TIMER_DEST installed by this plugin — nothing to remove there." >&2
+fi
+
+if is_ours "$CATCHUP_SERVICE_DEST"; then
+  rm -f "$CATCHUP_SERVICE_DEST"
+else
+  echo "No catch-up service at $CATCHUP_SERVICE_DEST installed by this plugin — nothing to remove there." >&2
 fi
 
 systemctl --user daemon-reload
