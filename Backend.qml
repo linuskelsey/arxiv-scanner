@@ -92,10 +92,6 @@ Item {
   readonly property string aiBackend: config.aiBackend || "auto"
   readonly property string codexModel: config.codexModel || ""
 
-  visible: true
-  implicitWidth: row.implicitWidth + Style.space(14)
-  implicitHeight: barSize
-
   FileView {
     id: stateFile
     path: Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-quantum/state.json"
