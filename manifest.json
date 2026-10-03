@@ -19,6 +19,7 @@
   },
   "hubCard": {
     "entry": "Card.qml",
-    "title": "arXiv Scanner"
+    "title": "arXiv Scanner",
+    "contract": 1
   }
 }
