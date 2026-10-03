@@ -15,8 +15,17 @@ Item {
   property bool compact: false
 
   // Fixed height of the scrollable papers area; everything else (title,
-  // Scan now/Settings, the settings form) stays put outside it.
-  readonly property real papersViewportHeight: Style.space(compact ? 320 : 240)
+  // Scan now/Settings, the settings form) stays put outside it. 0 means
+  // "use the compact-mode default" — the hub (Card.qml) overrides this to
+  // a smaller explicit value instead, since the hub wraps the whole card
+  // in its own Flickable once implicitHeight passes its own 400px cap
+  // (plugin-hub's maxCardHeight), and once that outer wrapper engages,
+  // header/footer scroll away with everything else instead of staying
+  // pinned the way this view's own internal Flickable (below) keeps them.
+  property real papersViewportHeightOverride: 0
+  readonly property real papersViewportHeight: papersViewportHeightOverride > 0
+    ? papersViewportHeightOverride
+    : Style.space(compact ? 320 : 240)
   // Fixed height of the scrollable settings-form viewport.
   readonly property real settingsViewportHeight: Style.space(200)
 

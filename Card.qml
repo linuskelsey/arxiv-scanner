@@ -23,6 +23,15 @@ Item {
     height: implicitHeight
     backend: data
     compact: true
+    // Keeps total implicitHeight comfortably under plugin-hub's own
+    // maxCardHeight (400, in its BarWidget.qml) — past that cap the hub
+    // wraps this whole card in its own Flickable (cardScroll) instead of
+    // just sizing the frame to fit, and that outer Flickable scrolls the
+    // header and footer along with everything else, defeating the pinned
+    // header/scrollable-middle/pinned-footer layout View.qml already
+    // implements internally. Picking our own smaller viewport keeps that
+    // internal Flickable as the only one that ever engages here.
+    papersViewportHeightOverride: 220
     fg: Color.popups.text
     ff: Style.font.menuFamily
   }
