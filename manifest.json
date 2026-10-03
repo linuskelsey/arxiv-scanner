@@ -16,5 +16,9 @@
     "category": "Info",
     "allowMultiple": false,
     "defaultSection": "right"
+  },
+  "notificationCard": {
+    "entry": "Card.qml",
+    "title": "arXiv Scanner"
   }
 }
