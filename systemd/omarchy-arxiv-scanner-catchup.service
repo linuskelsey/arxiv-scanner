@@ -1,0 +1,9 @@
+[Unit]
+Description=arXiv catch-up scan if the last one is stale (Omarchy plugin)
+# Managed-By: prometheus.arxiv-quantum — install.sh/uninstall.sh check for
+# this line before overwriting or removing this unit, so a same-named unit
+# from something else is never touched. Do not remove this line by hand.
+
+[Service]
+Type=oneshot
+ExecStart=%h/.config/omarchy/plugins/prometheus.arxiv-quantum/bin/poll.py --if-stale

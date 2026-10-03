@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "prometheus.arxiv-quantum",
+  "name": "arXiv Scanner",
+  "version": "1.1.0",
+  "author": "prometheus",
+  "description": "Daily scan of new arXiv submissions in a category of your choice, classified by Claude against your own interest areas, with a bar badge and notification on matches.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "arXiv Scanner",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

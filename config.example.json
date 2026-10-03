@@ -1,0 +1,13 @@
+{
+  "category": "quant-ph",
+  "interestAreas": [
+    "replace these with whatever you actually care about",
+    "e.g. a subfield, a technique, an application area"
+  ],
+  "watchedAuthors": [],
+  "maxAreaMatches": 3,
+  "maxWatchedMatches": 3,
+  "pollTime": "07:30",
+  "aiBackend": "auto",
+  "codexModel": ""
+}
