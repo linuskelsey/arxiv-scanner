@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 
-// Plugin Hub (io.github.linuskelsey.plugin-hub) face of the arXiv plugin: the same
+// Plugin Hub (io.github.linuskelsey.omarchy-plugin-hub) face of the arXiv plugin: the same
 // UI as the bar popup, in one column. Declared in manifest.json under
 // "hubCard".
 Item {
