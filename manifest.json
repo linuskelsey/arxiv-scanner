@@ -17,7 +17,7 @@
     "allowMultiple": false,
     "defaultSection": "right"
   },
-  "notificationCard": {
+  "hubCard": {
     "entry": "Card.qml",
     "title": "arXiv Scanner"
   }

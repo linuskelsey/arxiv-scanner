@@ -25,7 +25,7 @@ BarWidget {
   // after the first. Owning close() ourselves keeps that binding alive.
   function close() { popupOpen = false }
 
-  // Steps aside when the notification hub wraps this plugin and hides bar icons.
+  // Steps aside when the Plugin Hub wraps this plugin and hides bar icons.
   visible: !hub.hiddenByHub
   implicitWidth: hub.hiddenByHub ? 0 : row.implicitWidth + Style.space(14)
   implicitHeight: barSize
