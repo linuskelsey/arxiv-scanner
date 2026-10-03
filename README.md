@@ -178,17 +178,23 @@ default.
 Both backends run the same untrusted-content exposure: every prompt
 embeds today's arXiv titles/abstracts verbatim, off an unattended systemd
 timer, so an adversarial abstract trying to talk the model into invoking a
-tool is a real (if speculative) threat model either way. `claude` closes it
-by removing every tool from the session outright (`--tools ""` plus
-`--disallowedTools mcp__*`, verified empirically against claude's own
-`system/init` event). `codex` has no equivalent "no tools" flag, so it's
-closed differently: `--sandbox read-only` makes any model-issued shell
-command's filesystem/network access OS-enforced-denied regardless of this
-user's own `~/.codex/config.toml`, `--ignore-user-config` drops that
-config (profiles, MCP servers) from the invocation entirely while auth
-still works via `CODEX_HOME`, and `-c approval_policy="never"` ensures a
-denied attempt doesn't instead hang waiting on an interactive approval
-prompt that nothing is there to answer. See `run_codex()`'s docstring in
+tool is a real (if speculative) threat model either way. Both are closed
+the same way: no tool available at all, rather than a tool that's merely
+sandboxed. `claude` uses `--tools ""` plus `--disallowedTools mcp__*`
+(verified empirically against claude's own `system/init` event). `codex`
+uses `--disable shell_tool` (plus the `browser_use`/`computer_use`
+variants) — an earlier version of this relied on `--sandbox read-only`
+instead, reasoning it was equivalent to claude's `--tools ""`; it is not —
+per OpenAI's own docs, `read-only` only restricts *writes*, a shell
+command can still read any path the OS permits regardless of `--cd`
+(confirmed by a matching upstream report, openai/codex#23459). That gap
+was caught in marketplace review before it shipped. `--sandbox read-only`,
+`--ignore-user-config` (drops this user's own `~/.codex/config.toml` —
+profiles, MCP servers — from the invocation while auth still works via
+`CODEX_HOME`), and `-c approval_policy="never"` (so a denied attempt
+doesn't hang waiting on an interactive approval prompt nothing is there to
+answer) are kept as defense-in-depth, not the primary control. See
+`run_codex()`'s docstring in
 `bin/poll.py` for the full reasoning.
 
 ## How it works
