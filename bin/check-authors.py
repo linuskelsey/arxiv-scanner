@@ -35,7 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import poll  # noqa: E402 — same-directory script, reused for state/config I/O
 
-STATE_DIR = Path.home() / ".local/state/omarchy-arxiv-quantum"
+STATE_DIR = Path.home() / ".local/state/omarchy-arxiv-scanner"
 RESULT_FILE = STATE_DIR / "author_check.json"
 
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom", "os": "http://a9.com/-/spec/opensearch/1.1/"}
@@ -56,7 +56,7 @@ MAX_RESPONSE_BYTES = 5_000_000
 
 
 def log(msg: str) -> None:
-    print(f"[arxiv-quantum] {msg}", file=sys.stderr)
+    print(f"[arxiv-scanner] {msg}", file=sys.stderr)
 
 
 def query_author(name: str, category: str, max_results: int) -> dict:
@@ -68,7 +68,7 @@ def query_author(name: str, category: str, max_results: int) -> dict:
         "max_results": max_results,
     })
     url = f"https://export.arxiv.org/api/query?{params}"
-    req = urllib.request.Request(url, headers={"User-Agent": "omarchy-arxiv-quantum/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "omarchy-arxiv-scanner/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             raw = resp.read(MAX_RESPONSE_BYTES + 1)

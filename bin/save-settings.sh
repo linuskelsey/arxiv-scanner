@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
-# Persists all user-configurable settings for the arxiv-quantum plugin and,
+# Persists all user-configurable settings for the arxiv-scanner plugin and,
 # if the poll time changed, regenerates the systemd --user timer to match.
 # Invoked from the bar widget's Settings panel via `bar.run(...)`.
 #
 # Usage: save-settings.sh --category quant-ph --interests "Area one, Area two" \
 #          --authors "Author One, Author Two" --max-area 3 --max-watched 3 \
-#          --max-watched-per-author 2 --poll-time 07:00
-# --max-watched-per-author may be empty (no per-author cap).
+#          --max-watched-per-author 2 --poll-time 07:00 --ai-backend auto \
+#          --codex-model ""
+# --max-watched-per-author and --codex-model may be empty.
 
 set -euo pipefail
 
-CONFIG_DIR="$HOME/.config/omarchy-arxiv-quantum"
+CONFIG_DIR="$HOME/.config/omarchy-arxiv-scanner"
 CONFIG_FILE="$CONFIG_DIR/config.json"
-TIMER_FILE="$HOME/.config/systemd/user/omarchy-arxiv-quantum.timer"
+TIMER_FILE="$HOME/.config/systemd/user/omarchy-arxiv-scanner.timer"
 
 # Same-named unit at that path might not be ours — install.sh already
 # checks this before touching it; this script edits the timer in place too
 # (below) and needs the same guard, or a foreign unit could be altered by
 # the Settings panel.
-MARKER="# Managed-By: prometheus.arxiv-quantum"
+MARKER="# Managed-By: prometheus.arxiv-scanner"
 is_ours() { [[ -f "$1" ]] && grep -qF "$MARKER" "$1"; }
 
 CATEGORY="quant-ph"
@@ -28,6 +29,8 @@ MAX_AREA="3"
 MAX_WATCHED="3"
 MAX_WATCHED_PER_AUTHOR=""
 POLL_TIME="07:00"
+AI_BACKEND="auto"
+CODEX_MODEL=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -38,6 +41,8 @@ while [[ $# -gt 0 ]]; do
     --max-watched) MAX_WATCHED="$2"; shift 2 ;;
     --max-watched-per-author) MAX_WATCHED_PER_AUTHOR="$2"; shift 2 ;;
     --poll-time) POLL_TIME="$2"; shift 2 ;;
+    --ai-backend) AI_BACKEND="$2"; shift 2 ;;
+    --codex-model) CODEX_MODEL="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -57,6 +62,8 @@ jq -n \
   --arg authors "$AUTHORS" \
   --arg pollTime "$POLL_TIME" \
   --arg maxPerAuthor "$MAX_WATCHED_PER_AUTHOR" \
+  --arg aiBackend "$AI_BACKEND" \
+  --arg codexModel "$CODEX_MODEL" \
   --argjson maxArea "${MAX_AREA:-3}" \
   --argjson maxWatched "${MAX_WATCHED:-3}" \
   '
@@ -70,7 +77,9 @@ jq -n \
       maxAreaMatches: $maxArea,
       maxWatchedMatches: $maxWatched,
       maxWatchedPerAuthor: (if ($maxPerAuthorTrimmed | length) > 0 then ($maxPerAuthorTrimmed | tonumber) else null end),
-      pollTime: $pollTime
+      pollTime: $pollTime,
+      aiBackend: $aiBackend,
+      codexModel: $codexModel
     }
   ' > "$TMP_FILE"
 mv -f "$TMP_FILE" "$CONFIG_FILE"
@@ -83,6 +92,6 @@ if [[ "$POLL_TIME" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] && is_ours "$TIMER_FI
   if [[ "$CURRENT" != "$POLL_TIME" ]]; then
     sed -i "s/^OnCalendar=.*/OnCalendar=*-*-* ${POLL_TIME}:00/" "$TIMER_FILE"
     systemctl --user daemon-reload
-    systemctl --user restart omarchy-arxiv-quantum.timer
+    systemctl --user restart omarchy-arxiv-scanner.timer
   fi
 fi

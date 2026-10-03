@@ -1,6 +1,6 @@
 [Unit]
 Description=Run arXiv new-submissions scan every morning
-# Managed-By: prometheus.arxiv-quantum — install.sh/uninstall.sh check for
+# Managed-By: prometheus.arxiv-scanner — install.sh/uninstall.sh check for
 # this line before overwriting or removing this unit, so a same-named unit
 # from something else is never touched. Do not remove this line by hand.
 # (save-settings.sh only ever rewrites the OnCalendar= line below, so your

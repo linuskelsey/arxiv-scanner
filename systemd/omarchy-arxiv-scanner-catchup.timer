@@ -1,6 +1,6 @@
 [Unit]
 Description=Check for a stale arXiv scan shortly after login/boot
-# Managed-By: prometheus.arxiv-quantum — install.sh/uninstall.sh check for
+# Managed-By: prometheus.arxiv-scanner — install.sh/uninstall.sh check for
 # this line before overwriting or removing this unit, so a same-named unit
 # from something else is never touched. Do not remove this line by hand.
 #

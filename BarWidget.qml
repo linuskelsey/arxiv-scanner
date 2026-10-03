@@ -11,10 +11,10 @@ import qs.Commons
 // network or to Claude itself.
 BarWidget {
   id: root
-  moduleName: "prometheus.arxiv-quantum"
+  moduleName: "prometheus.arxiv-scanner"
 
   Backend { id: data }
-  HubConfig { id: hub; pluginId: "prometheus.arxiv-quantum" }
+  HubConfig { id: hub; pluginId: "prometheus.arxiv-scanner" }
 
   property bool popupOpen: false
 

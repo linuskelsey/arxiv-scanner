@@ -16,7 +16,7 @@ Item {
     Quickshell.execDetached(["bash", "-lc", command])
   }
 
-  readonly property string pluginDir: Quickshell.env("HOME") + "/.config/omarchy/plugins/prometheus.arxiv-quantum/"
+  readonly property string pluginDir: Quickshell.env("HOME") + "/.config/omarchy/plugins/prometheus.arxiv-scanner/"
 
   function shQuote(value) {
     return "'" + String(value).split("'").join("'\\''") + "'"
@@ -62,7 +62,7 @@ Item {
 
   function markViewed() {
     if (root.updatedAt === "") return
-    var dir = Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-quantum"
+    var dir = Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-scanner"
     var file = dir + "/last_viewed.json"
     var json = JSON.stringify({ viewed_at: root.updatedAt })
     // Not a plain `> file` redirect onto a predictable path: that follows
@@ -94,7 +94,7 @@ Item {
 
   FileView {
     id: stateFile
-    path: Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-quantum/state.json"
+    path: Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-scanner/state.json"
     watchChanges: true
     printErrors: false
     onLoaded: {
@@ -110,7 +110,7 @@ Item {
 
   FileView {
     id: configFile
-    path: Quickshell.env("HOME") + "/.config/omarchy-arxiv-quantum/config.json"
+    path: Quickshell.env("HOME") + "/.config/omarchy-arxiv-scanner/config.json"
     watchChanges: true
     printErrors: false
     onLoaded: {
@@ -125,7 +125,7 @@ Item {
 
   FileView {
     id: authorCheckFile
-    path: Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-quantum/author_check.json"
+    path: Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-scanner/author_check.json"
     watchChanges: true
     printErrors: false
     onLoaded: {
@@ -141,7 +141,7 @@ Item {
 
   FileView {
     id: viewedFile
-    path: Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-quantum/last_viewed.json"
+    path: Quickshell.env("HOME") + "/.local/state/omarchy-arxiv-scanner/last_viewed.json"
     watchChanges: true
     printErrors: false
     onLoaded: {

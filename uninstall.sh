@@ -5,19 +5,19 @@
 set -euo pipefail
 
 SYSTEMD_DIR="$HOME/.config/systemd/user"
-SERVICE_DEST="$SYSTEMD_DIR/omarchy-arxiv-quantum.service"
-TIMER_DEST="$SYSTEMD_DIR/omarchy-arxiv-quantum.timer"
-CATCHUP_SERVICE_DEST="$SYSTEMD_DIR/omarchy-arxiv-quantum-catchup.service"
-CATCHUP_TIMER_DEST="$SYSTEMD_DIR/omarchy-arxiv-quantum-catchup.timer"
+SERVICE_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner.service"
+TIMER_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner.timer"
+CATCHUP_SERVICE_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner-catchup.service"
+CATCHUP_TIMER_DEST="$SYSTEMD_DIR/omarchy-arxiv-scanner-catchup.timer"
 
 # Same-named units at these paths might not be ours — don't disable, stop,
 # or delete anything install.sh didn't actually put there. Both shipped
 # unit files carry this marker comment.
-MARKER="# Managed-By: prometheus.arxiv-quantum"
+MARKER="# Managed-By: prometheus.arxiv-scanner"
 is_ours() { [[ -f "$1" ]] && grep -qF "$MARKER" "$1"; }
 
 if is_ours "$TIMER_DEST"; then
-  systemctl --user disable --now omarchy-arxiv-quantum.timer 2>/dev/null || true
+  systemctl --user disable --now omarchy-arxiv-scanner.timer 2>/dev/null || true
   rm -f "$TIMER_DEST"
 else
   echo "No timer at $TIMER_DEST installed by this plugin — nothing to remove there." >&2
@@ -30,7 +30,7 @@ else
 fi
 
 if is_ours "$CATCHUP_TIMER_DEST"; then
-  systemctl --user disable --now omarchy-arxiv-quantum-catchup.timer 2>/dev/null || true
+  systemctl --user disable --now omarchy-arxiv-scanner-catchup.timer 2>/dev/null || true
   rm -f "$CATCHUP_TIMER_DEST"
 else
   echo "No catch-up timer at $CATCHUP_TIMER_DEST installed by this plugin — nothing to remove there." >&2
@@ -46,7 +46,7 @@ systemctl --user daemon-reload
 
 echo "Timer stopped and unit files removed."
 echo "Still on disk (delete manually if you want a clean uninstall):"
-echo "  ~/.config/omarchy-arxiv-quantum/       (your config)"
-echo "  ~/.local/state/omarchy-arxiv-quantum/  (scan history/state)"
+echo "  ~/.config/omarchy-arxiv-scanner/       (your config)"
+echo "  ~/.local/state/omarchy-arxiv-scanner/  (scan history/state)"
 echo "  $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)  (this plugin directory)"
 echo "Restart the shell afterward so the bar icon disappears: omarchy-restart-shell"
