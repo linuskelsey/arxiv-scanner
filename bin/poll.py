@@ -266,15 +266,31 @@ def run_claude(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CH
 def run_codex(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CHARS,
               model: str | None = None) -> subprocess.CompletedProcess:
     """
-    Same untrusted-content risk as run_claude, but codex has no equivalent
-    of claude's --tools "" — there's no flag that empties the tool list
-    outright. Its lockdown here is OS-enforced sandboxing of whatever shell
-    command the model attempts, instead of removing the tool itself:
+    Same untrusted-content risk as run_claude. First pass at this used
+    --sandbox read-only as the lockdown, reasoning it was equivalent to
+    claude's --tools "". It is not: per OpenAI's own docs (and a matching
+    upstream bug report, openai/codex#23459), "read-only" only restricts
+    *writes* — a model-issued shell command can still read any path the
+    OS permits, unscoped by --cd. A paper abstract instructing the model
+    to `cat ~/.ssh/id_rsa` (or any other local file) and act on/recite the
+    contents would have been a real exfiltration-into-model-context path,
+    caught in marketplace review rather than caught here first.
 
-    --sandbox read-only blocks any filesystem write or network access a
-    model-issued shell command might try, independent of this user's own
-    ~/.codex/config.toml. --ignore-user-config drops that config from this
-    invocation entirely — profiles, any configured MCP servers, shell
+    The actual fix: remove the shell tool from the model outright, the
+    same move as claude's --tools "" rather than trying to sandbox a tool
+    this plugin never needs in the first place (every call here is plain
+    text in, text out — no file or shell access is ever legitimately
+    required). --disable shell_tool does that (confirmed present and
+    "stable" via `codex features list` on the locally installed version);
+    the three browser_use variants and computer_use are disabled alongside
+    it for the same reason — unused capability, closed rather than trusted
+    to stay sandboxed. --sandbox read-only, --ignore-user-config, and
+    approval_policy="never" (below) are kept as defense-in-depth in case a
+    future codex version re-adds a tool path these --disable flags don't
+    happen to cover, not as the primary control anymore.
+
+    --ignore-user-config drops this user's own ~/.codex/config.toml from
+    the invocation entirely — profiles, any configured MCP servers, shell
     environment policy overrides — the same role --setting-sources ""
     plays for claude above; per `codex exec --help`, auth still works via
     CODEX_HOME regardless, so login isn't affected by ignoring the rest of
@@ -288,11 +304,11 @@ def run_codex(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CHA
     to be this user's own config.toml default, not a universal one.
 
     --cd points at a freshly made, empty scratch directory (not the
-    plugin's own config/state dirs) so there's nothing of interest for an
-    allowed read-only shell command to find; --ephemeral skips persisting
-    a session transcript of the (untrusted) abstract text to ~/.codex;
-    --skip-git-repo-check avoids a hard failure since that scratch dir is
-    never a git repo.
+    plugin's own config/state dirs) — redundant with --disable shell_tool
+    now, kept as defense-in-depth alongside the sandbox flags above;
+    --ephemeral skips persisting a session transcript of the (untrusted)
+    abstract text to ~/.codex; --skip-git-repo-check avoids a hard failure
+    since that scratch dir is never a git repo.
 
     Caller passes model=None to use codex's own built-in default rather
     than requiring every user to configure one just for this to work.
@@ -308,6 +324,11 @@ def run_codex(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CHA
             "--ephemeral",
             "--color", "never",
             "--cd", scratch_dir,
+            "--disable", "shell_tool",
+            "--disable", "browser_use",
+            "--disable", "browser_use_external",
+            "--disable", "browser_use_full_cdp_access",
+            "--disable", "computer_use",
         ]
         if model:
             argv += ["-m", model]
