@@ -24,6 +24,9 @@ Item {
 
   function escapeHtml(value) {
     return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  }
+
+  function isSafeArxivLink(url) {
     return typeof url === "string" && /^https:\/\/(www\.)?arxiv\.org\/abs\/[A-Za-z0-9._\/-]+$/.test(url)
   }
 
