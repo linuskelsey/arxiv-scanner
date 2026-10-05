@@ -167,8 +167,8 @@ Item {
           id: titleText
           textFormat: Text.PlainText
           anchors.left: parent.left
-          anchors.right: modelText.left
-          anchors.rightMargin: Style.space(8)
+          anchors.right: view.compact ? parent.right : modelText.left
+          anchors.rightMargin: view.compact ? Style.space(28) : Style.space(8)
           text: "arXiv " + backend.category + " scan"
           color: view.fg
           font.family: view.ff
@@ -180,7 +180,9 @@ Item {
         Text {
           id: modelText
           textFormat: Text.PlainText
-          visible: backend.agentLabel !== ""
+          // In the hub card the top-right corner belongs to the hub's
+          // collapse chevron, so the model moves to the "Last checked" line.
+          visible: backend.agentLabel !== "" && !view.compact
           anchors.right: parent.right
           anchors.baseline: titleText.baseline
           text: "model: " + backend.agentLabel
@@ -194,6 +196,7 @@ Item {
         textFormat: Text.PlainText
         visible: backend.updatedAt !== ""
         text: "Last checked: " + Qt.formatDateTime(new Date(backend.updatedAt), "MMM d, hh:mm")
+              + (view.compact && backend.agentLabel !== "" ? " · model: " + backend.agentLabel : "")
         color: Qt.darker(view.fg, 1.4)
         font.family: view.ff
         font.pixelSize: Style.font.caption

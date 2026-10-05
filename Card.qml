@@ -8,6 +8,10 @@ Item {
   id: card
 
   property real hubWidth: 300
+  // View draws its own title, so the hub hides its title while this card is
+  // expanded and overlays only a collapse chevron in the top-right corner.
+  // Ignored by hubs that predate it.
+  property bool hubOwnTitle: true
   // Unseen scan results count toward the hub's bell badge.
   readonly property int badge: data.hasUnseen ? data.totalMatches : 0
   // Called by the hub whenever the panel opens.
