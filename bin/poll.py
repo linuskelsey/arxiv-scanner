@@ -282,8 +282,10 @@ def run_codex(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CHA
     text in, text out — no file or shell access is ever legitimately
     required). --disable shell_tool does that (confirmed present and
     "stable" via `codex features list` on the locally installed version);
-    the three browser_use variants and computer_use are disabled alongside
-    it for the same reason — unused capability, closed rather than trusted
+    view_image (which reads local image files independently of shell_tool,
+    flagged in marketplace review), unified_exec, multi_agent, apps,
+    plugins and image_generation are disabled alongside it, as are the
+    three browser_use variants and computer_use, for the same reason — unused capability, closed rather than trusted
     to stay sandboxed. --sandbox read-only, --ignore-user-config, and
     approval_policy="never" (below) are kept as defense-in-depth in case a
     future codex version re-adds a tool path these --disable flags don't
@@ -329,6 +331,12 @@ def run_codex(prompt: str, timeout: float, max_bytes: int = MAX_AGENT_OUTPUT_CHA
             "--disable", "browser_use_external",
             "--disable", "browser_use_full_cdp_access",
             "--disable", "computer_use",
+            "--disable", "view_image",
+            "--disable", "unified_exec",
+            "--disable", "multi_agent",
+            "--disable", "apps",
+            "--disable", "plugins",
+            "--disable", "image_generation",
         ]
         if model:
             argv += ["-m", model]
