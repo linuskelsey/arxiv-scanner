@@ -187,23 +187,18 @@ tool is a real (if speculative) threat model either way. Both are closed
 the same way: no tool available at all, rather than a tool that's merely
 sandboxed. `claude` uses `--tools ""` plus `--disallowedTools mcp__*`
 (verified empirically against claude's own `system/init` event). `codex`
-uses `--disable` on every tool path it has: `shell_tool`, `view_image`
-(which reads local image files independently of the shell tool),
+uses `--disable` on every tool path it has: `shell_tool`, `view_image`,
 `unified_exec`, `multi_agent`, `apps`, `plugins`, `image_generation`, and
-the `browser_use`/`computer_use` variants — an earlier version of this relied on `--sandbox read-only`
-instead, reasoning it was equivalent to claude's `--tools ""`; it is not —
-per OpenAI's own docs, `read-only` only restricts *writes*, a shell
-command can still read any path the OS permits regardless of `--cd`
-(confirmed by a matching upstream report, openai/codex#23459). That gap
-was caught in marketplace review before it shipped, and `view_image`
-being a separate tool from the shell was caught in a second review pass. `--sandbox read-only`,
-`--ignore-user-config` (drops this user's own `~/.codex/config.toml` —
-profiles, MCP servers — from the invocation while auth still works via
-`CODEX_HOME`), and `-c approval_policy="never"` (so a denied attempt
-doesn't hang waiting on an interactive approval prompt nothing is there to
-answer) are kept as defense-in-depth, not the primary control. See
-`run_codex()`'s docstring in
-`bin/poll.py` for the full reasoning.
+the `browser_use`/`computer_use` variants. A sandbox alone isn't enough
+here: `--sandbox read-only` only restricts *writes*, so a tool that can
+read files can still read any path the OS permits regardless of `--cd`
+(see openai/codex#23459). `--sandbox read-only`, `--ignore-user-config`
+(drops this user's own `~/.codex/config.toml` — profiles, MCP servers —
+from the invocation while auth still works via `CODEX_HOME`), and
+`-c approval_policy="never"` (so a denied attempt doesn't hang waiting on
+an interactive approval prompt nothing is there to answer) are kept as
+defense-in-depth, not the primary control. See `run_codex()`'s docstring
+in `bin/poll.py` for the full reasoning.
 
 ## How it works
 
@@ -212,17 +207,17 @@ the day's new submissions to the configured AI backend in one batched call
 for relevance ranking + summaries, separately checks every candidate's
 author list against `watchedAuthors`, and writes the combined result to
 `~/.local/state/omarchy-arxiv-scanner/state.json`, which `Backend.qml`
-reads and the bar widget and hub card render. `bin/check-authors.py` is a standalone
-on-demand lookup (from the Settings panel) for sanity-checking a watched
-author's name against arXiv.
+reads and the bar widget and hub card render. `bin/check-authors.py` is a
+standalone on-demand lookup (from the Settings panel) for sanity-checking
+a watched author's name against arXiv.
 
 The UI is split into three QML pieces so the bar and the hub card share
 one implementation: `Backend.qml` holds state-file watching, config-derived
 values and actions; `View.qml` is the popup UI (with a `compact` mode for
 the hub card); `BarWidget.qml` and `Card.qml` are thin wrappers that host
 them in the bar and the notification hub respectively. `HubConfig.qml`
-provides the hub's settings entry. Nothing in the QML talks to the network or to
-an AI backend directly — it only reads state files and shells out via
+provides the hub's settings entry. Nothing in the QML talks to the network
+or to an AI backend directly — it only reads state files and shells out via
 `bar.run(...)` for actions (scan now, check authors, save settings).
 
 Two systemd `--user` timers drive `poll.py`, both installed by `install.sh`:
