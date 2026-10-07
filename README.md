@@ -61,7 +61,7 @@ cd ~/.config/omarchy/plugins/prometheus.arxiv-scanner
 # force-moved to point elsewhere). This can never be the commit you're
 # reading this file at — a commit can't embed its own resulting hash — so
 # it intentionally trails whatever's currently under review by one step.
-git checkout 7b6476b0dcfc55685d5262dac313ba792506a916
+git checkout 2d4cc71d9e822730660f7fd878672acca986f17a
 ./install.sh
 ```
 
