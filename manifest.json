@@ -5,12 +5,21 @@
   "version": "1.1.0",
   "author": "linuskelsey",
   "description": "Daily scan of new arXiv submissions in a category of your choice, classified against your own interest areas by Claude Code or Codex, with a bar badge and notification on matches.",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
   "barWidget": {
     "displayName": "arXiv Scanner",
     "category": "Info",
     "allowMultiple": false,
     "defaultSection": "right"
+  },
+  "hubCard": {
+    "entry": "Card.qml",
+    "title": "arXiv Scanner",
+    "contract": 1
   }
 }
