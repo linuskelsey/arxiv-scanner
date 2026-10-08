@@ -39,4 +39,9 @@ Item {
     fg: Color.popups.text
     ff: Style.font.menuFamily
   }
+
+  // The form is too wide for the card, so Settings opens it here instead.
+  // Owned by the card (always loaded), not the View, so it outlives the hub
+  // panel closing when this window takes focus.
+  SettingsWindow { backend: data }
 }
