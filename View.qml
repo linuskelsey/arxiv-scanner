@@ -382,18 +382,23 @@ Item {
               foreground: view.fg
               onClicked: {
                 backend.settingsOpen = view.compact ? true : !backend.settingsOpen
-                if (backend.settingsOpen && !view.compact) settingsForm.load()
               }
             }
           }
 
-          SettingsForm {
-            id: settingsForm
-            backend: view.backend
-            fg: view.fg
-            ff: view.ff
-            // Hub card (compact): the form lives in SettingsWindow instead.
-            visible: backend.settingsOpen && !view.compact
+          // Created only while open: idle TextFields would otherwise sit in
+          // the shared shell and auto-read the Wayland clipboard on selection
+          // change. Hub card (compact): the form lives in SettingsWindow.
+          Loader {
+            width: parent.width
+            active: backend.settingsOpen && !view.compact
+            visible: active
+            sourceComponent: SettingsForm {
+              backend: view.backend
+              fg: view.fg
+              ff: view.ff
+            }
+            onLoaded: item.load()
           }
         }
       }

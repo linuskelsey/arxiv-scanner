@@ -28,7 +28,6 @@ PanelWindow {
     var want = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
     for (var i = 0; i < Quickshell.screens.length; i++)
       if (Quickshell.screens[i].name === want) { screen = Quickshell.screens[i]; break }
-    form.load()
   }
 
   visible: open
@@ -92,12 +91,17 @@ PanelWindow {
           font.bold: true
         }
 
-        SettingsForm {
-          id: form
+        // Created only while open (see the Loader in View.qml).
+        Loader {
           width: parent.width
-          backend: win.backend
-          fg: win.fg
-          ff: win.ff
+          active: win.open
+          visible: active
+          sourceComponent: SettingsForm {
+            backend: win.backend
+            fg: win.fg
+            ff: win.ff
+          }
+          onLoaded: item.load()
         }
 
         Button {
