@@ -681,6 +681,51 @@ def normalize_latex_accents(text: str) -> str:
     )
 
 
+def split_creators(creators: str) -> list[str]:
+    """
+    Splits arXiv's dc:creator string into author names. Authors are comma
+    separated, but an author can carry a parenthesised affiliation that has
+    commas of its own ("A. Name (Univ, City, CA, USA), B. Name"), so only
+    top-level commas split, and the affiliation is dropped — otherwise
+    fragments like "CA" became bogus authors.
+    """
+    names, depth, cur = [], 0, []
+    for ch in creators:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            names.append("".join(cur))
+            cur = []
+        elif depth == 0:
+            cur.append(ch)
+    names.append("".join(cur))
+    if depth:
+        # Unbalanced "(": don't let it swallow every later author (and hide a
+        # watched one) — fall back to a plain comma split.
+        names = creators.split(",")
+    return [" ".join(n.split()) for n in names if n.strip()]
+
+
+def name_tokens(name: str) -> set[str]:
+    return set(re.findall(r"\w+", name.lower()))
+
+
+def author_matches(author: str, watched: str) -> bool:
+    """
+    A watched name matches when all its words appear in the paper's author
+    entry, or (for a shortened entry such as "Carlos Cid" vs a longer
+    watched "Carlos A. Cid") all of a multi-word entry appear in the watched
+    name. Whole words, not substrings: a stray "CA" must never match
+    "Carlos Cid".
+    """
+    a, w = name_tokens(author), name_tokens(watched)
+    if not a or not w:
+        return False
+    return w <= a or (len(a) >= 2 and a <= w)
+
+
 def fetch_candidates(category: str) -> list[dict]:
     feed_url = f"https://rss.arxiv.org/rss/{category}"
     req = urllib.request.Request(feed_url, headers={"User-Agent": "omarchy-arxiv-scanner/1.0"})
@@ -702,7 +747,7 @@ def fetch_candidates(category: str) -> list[dict]:
         abstract = normalize_latex_accents(re.sub(r"^.*?Abstract:\s*", "", description, flags=re.DOTALL).strip())
         guid = (item.findtext("guid", default="") or link).strip()
         creators = (item.findtext("dc:creator", default="", namespaces=RSS_NS) or "").strip()
-        creator_list = [c.strip() for c in creators.split(",") if c.strip()]
+        creator_list = split_creators(creators)
         lead_author = creator_list[0] if creator_list else ""
         has_coauthors = len(creator_list) > 1
 
@@ -731,10 +776,8 @@ def watched_author_matches(candidates: list[dict], watched: list[str]) -> list[d
     matches = []
     for c in candidates:
         for author in c.get("authors", []):
-            author_l = author.lower()
             for name in watched:
-                name_l = name.lower()
-                if name_l in author_l or author_l in name_l:
+                if author_matches(author, name):
                     matches.append({
                         "id": c["id"],
                         "title": c["title"],
