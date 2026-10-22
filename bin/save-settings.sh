@@ -47,6 +47,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# --argjson below parses its value as arbitrary JSON; accept digits only.
+[[ "$MAX_AREA" =~ ^[0-9]{1,2}$ ]] || MAX_AREA="3"
+[[ "$MAX_WATCHED" =~ ^[0-9]{1,2}$ ]] || MAX_WATCHED="3"
+[[ -z "$MAX_WATCHED_PER_AUTHOR" || "$MAX_WATCHED_PER_AUTHOR" =~ ^[0-9]{1,2}$ ]] || MAX_WATCHED_PER_AUTHOR=""
+
 mkdir -p "$CONFIG_DIR"
 
 # mktemp, not a predictable "$CONFIG_FILE.tmp" — a fixed temp-file name in a

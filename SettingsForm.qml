@@ -17,6 +17,10 @@ Column {
   spacing: Style.space(8)
 
   // Copies the saved values into the fields. Call each time the form opens.
+  // Every field is read-only until focused. A writable Qt TextField reads
+  // the clipboard whenever it changes (to track canPaste), so a hostile
+  // clipboard producer could stall the shell; a read-only one never does.
+  // Only the single field being typed in is ever writable.
   function load() {
     categoryField.text = backend.category
     interestsField.text = backend.interestAreas.join(", ")
@@ -41,6 +45,7 @@ Column {
   }
   TextField {
     id: categoryField
+    readOnly: !activeFocus  // see note above load()
     width: parent.width
     placeholderText: "quant-ph"
   }
@@ -56,6 +61,7 @@ Column {
   }
   TextField {
     id: interestsField
+    readOnly: !activeFocus  // see note above load()
     width: parent.width
     placeholderText: "e.g. QKD, quantum networking"
   }
@@ -71,6 +77,7 @@ Column {
   }
   TextField {
     id: authorsField
+    readOnly: !activeFocus  // see note above load()
     width: parent.width
     placeholderText: "e.g. Stefano Pirandola, John Preskill"
   }
@@ -148,6 +155,7 @@ Column {
       }
       TextField {
         id: maxAreaField
+        readOnly: !activeFocus  // see note above load()
         width: parent.width
         placeholderText: "3"
         validator: IntValidator { bottom: 0; top: 20 }
@@ -166,6 +174,7 @@ Column {
       }
       TextField {
         id: maxWatchedField
+        readOnly: !activeFocus  // see note above load()
         width: parent.width
         placeholderText: "3"
         validator: IntValidator { bottom: 0; top: 20 }
@@ -185,6 +194,7 @@ Column {
       }
       TextField {
         id: maxWatchedPerAuthorField
+        readOnly: !activeFocus  // see note above load()
         width: parent.width
         placeholderText: "no cap"
         validator: IntValidator { bottom: 1; top: 20 }
@@ -203,6 +213,7 @@ Column {
       }
       TextField {
         id: pollTimeField
+        readOnly: !activeFocus  // see note above load()
         width: parent.width
         placeholderText: "07:00"
       }
@@ -242,6 +253,7 @@ Column {
       }
       TextField {
         id: codexModelField
+        readOnly: !activeFocus  // see note above load()
         width: parent.width
         placeholderText: "e.g. openai/gpt-5-codex"
       }
