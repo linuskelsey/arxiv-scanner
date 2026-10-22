@@ -56,6 +56,20 @@ NOTIFIED_ID_CAP = 1000
 # Cap well above that so a misbehaving/compromised endpoint can't force an
 # unbounded read into memory.
 MAX_FEED_BYTES = 5_000_000
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """
+    Refuse redirects. The stock handler drains an accepted redirect's body
+    with an unbounded read() before our size cap applies. Returning None
+    here makes urllib raise HTTPError without reading anything.
+    """
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirect)
 # A batch of paper summaries should be a few KB of JSON. Truncate before any
 # parsing or storage so a runaway agent process can't get unbounded output
 # written into the persistent state file.
@@ -729,7 +743,7 @@ def author_matches(author: str, watched: str) -> bool:
 def fetch_candidates(category: str) -> list[dict]:
     feed_url = f"https://rss.arxiv.org/rss/{category}"
     req = urllib.request.Request(feed_url, headers={"User-Agent": "omarchy-arxiv-scanner/1.0"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with _opener.open(req, timeout=30) as resp:
         raw = resp.read(MAX_FEED_BYTES + 1)
     if len(raw) > MAX_FEED_BYTES:
         raise ValueError(f"feed response exceeded {MAX_FEED_BYTES} bytes, aborting")

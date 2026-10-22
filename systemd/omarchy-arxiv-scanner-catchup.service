@@ -6,4 +6,7 @@ Description=arXiv catch-up scan if the last one is stale (Omarchy plugin)
 
 [Service]
 Type=oneshot
+# Backstop: the fetches are size-capped, but never let a runaway helper
+# take the session with it.
+MemoryMax=512M
 ExecStart=%h/.config/omarchy/plugins/prometheus.arxiv-scanner/bin/poll.py --if-stale

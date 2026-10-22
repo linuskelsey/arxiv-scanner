@@ -55,6 +55,20 @@ MAX_BACKFILL_DAYS = poll.MAX_WATCHED_CANDIDATE_AGE_DAYS
 MAX_RESPONSE_BYTES = 5_000_000
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """
+    Refuse redirects. The stock handler drains an accepted redirect's body
+    with an unbounded read() before our size cap applies. Returning None
+    here makes urllib raise HTTPError without reading anything.
+    """
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirect)
+
+
 def log(msg: str) -> None:
     print(f"[arxiv-scanner] {msg}", file=sys.stderr)
 
@@ -70,7 +84,7 @@ def query_author(name: str, category: str, max_results: int) -> dict:
     url = f"https://export.arxiv.org/api/query?{params}"
     req = urllib.request.Request(url, headers={"User-Agent": "omarchy-arxiv-scanner/1.0"})
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with _opener.open(req, timeout=20) as resp:
             raw = resp.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
             raise ValueError(f"response exceeded {MAX_RESPONSE_BYTES} bytes, aborting")
